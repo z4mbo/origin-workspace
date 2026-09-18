@@ -148,10 +148,6 @@ export function IssueComposer({
               rows={5}
               disabled={busy}
             />
-            <select aria-label="Issue template" disabled={busy} value="" onChange={e => {
-              const templates: Record<string, string> = { bug: "## What happened\n\n\n## Steps to reproduce\n1. \n\n## Expected behavior\n\n\n## Environment\n", feature: "## Problem\n\n\n## Proposed change\n\n\n## Acceptance criteria\n- [ ] \n", task: "## Goal\n\n\n## Checklist\n- [ ] \n" };
-              if (e.target.value && (!description.trim() || window.confirm("Replace the current description with this template?"))) setDescription(templates[e.target.value]);
-            }}><option value="">Apply template</option><option value="bug">Bug report</option><option value="feature">Feature request</option><option value="task">Task</option></select>
             <IssueFields
               columns={columns}
               members={members || []}

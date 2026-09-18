@@ -14,7 +14,7 @@ const views = [
 
 const questions = [
   { question: "Is Origin open source?", answer: "Yes. Origin is an MIT-licensed public beta. Use the hosted workspace or run your own Node server with a Convex backend. The source and setup guide are on GitHub; your workspace content stays private." },
-  { question: "What else is in the workspace?", answer: "Collaborative documents, a cross-project roadmap, private release notes, a calendar, and opt-in public feedback forms. Turn feedback, document selections, or chat messages into assigned issues." },
+  { question: "What else is in the workspace?", answer: "An issue calendar, project assets, an encrypted vault, and a feedback tab for each project. Turn feedback or chat messages into assigned issues, attach images and files, and connect the work to GitHub." },
   { question: "What is Origin?", answer: "Origin is a shared workspace for people making things together. Projects, issues, team conversations, calls, and a collaborative canvas live in the same place." },
   { question: "Can I bring my team?", answer: "Yes. Create a named workspace, then share an invitation link. You can choose who manages the workspace, who can contribute, and who has read-only access." },
   { question: "What happens when an issue is done?", answer: "Completed issues appear in the project's Completed section, grouped by their original column. Your active board stays focused, and you can find or restore completed work at any time." },

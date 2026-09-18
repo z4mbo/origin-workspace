@@ -40,11 +40,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, hosted: "origin-local" });
     }
     if (body.action === "update") {
-      const userId = await updateLocalVoicePresence(user, !!body.audioEnabled, !!body.videoEnabled, !!body.screenSharing);
-      return NextResponse.json({ userId, hosted: "origin-local" });
+      const participant = await updateLocalVoicePresence(user, !!body.audioEnabled, !!body.videoEnabled, !!body.screenSharing);
+      return NextResponse.json({ userId: participant.userId, joinedAt: participant.joinedAt, hosted: "origin-local" });
     }
-    const userId = await joinLocalVoice(user, !!body.audioEnabled, !!body.videoEnabled, !!body.screenSharing);
-    return NextResponse.json({ userId, hosted: "origin-local" });
+    const participant = await joinLocalVoice(user, !!body.audioEnabled, !!body.videoEnabled, !!body.screenSharing);
+    return NextResponse.json({ userId: participant.userId, joinedAt: participant.joinedAt, hosted: "origin-local" });
   } catch (error) {
     return errorResponse(error);
   }
