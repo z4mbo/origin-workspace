@@ -60,6 +60,7 @@ import { MemberProfileContext, useMemberProfile, useWorkspace, type Workspace } 
 import { MemberProfile } from "./member-profile";
 import { useModalKeyboard } from "./use-modal-keyboard";
 import { GitHubConnection } from "./github-connection";
+import { GitHubIssueIndicator } from "./github-issue-indicator";
 import { RepositoryProvisioning } from "./repository-provisioning";
 import { useNotifications } from "./use-notifications";
 import { IssueRelations } from "./issue-relations";
@@ -1404,7 +1405,7 @@ function BoardTab({ project, projectId, sessionToken, canEdit, userEmail, onCrea
                     onKeyDown={event => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setSelectedTaskId(task._id); } }}
                   >
                     <div className="task-card-head">
-                      <span className="task-code">{taskKey(task._id)}</span>
+                      <span className="task-code">{taskKey(task._id)}<GitHubIssueIndicator number={task.githubIssueNumber} /></span>
                       <button className="drag-handle" type="button" disabled={!canEdit} aria-label="Drag task">
                         <GripVertical size={14} />
                       </button>
@@ -1668,7 +1669,7 @@ function RepoTab({ project, sessionToken }: { project: Doc<"projects"> & { membe
           {github.loading ? <LoadingState label="GitHub issues" /> : null}
           {github.error ? <div className="notice danger">{github.error}</div> : null}
           {github.snapshot?.commitsError && <div className="notice">{github.snapshot.commitsError}</div>}
-          {project.repoUrl && !project.githubWorkspaceAccess && ["owner", "admin"].includes(project.memberRole) && <button className="ghost-button compact" onClick={async () => { try { await approveRepository({ sessionToken, projectId: project._id }); setRevision(value => value + 1); } catch { setRepoNotice("Could not authorize repository access"); } }}><GitBranch size={14} />Use workspace GitHub connection</button>}
+          {project.repoUrl && !project.githubWorkspaceAccess && ["owner", "admin"].includes(project.memberRole) && <button className="ghost-button compact" onClick={async () => { try { await approveRepository({ sessionToken, projectId: project._id, repoUrl: project.repoUrl! }); setRevision(value => value + 1); } catch { setRepoNotice("A workspace admin must authorize this repository"); } }}><GitBranch size={14} />Use workspace GitHub connection</button>}
           <GitHubConnection projectId={project._id} repoUrl={project.repoUrl} sessionToken={sessionToken} canManage={["owner", "admin"].includes(project.memberRole)} onChange={() => setRevision(value => value + 1)} />
         </div>
         <div className="panel commit-panel">

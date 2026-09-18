@@ -111,7 +111,9 @@
 .origin-user-avatar { box-sizing: border-box; }
 .workspace-app .profile-chip > .origin-user-avatar { display: inline-grid; place-items: center; line-height: 1; padding: 0; }
 .work-issue-row { grid-template-columns: 28px minmax(120px, 1fr) minmax(80px, 160px) 28px 70px 78px; gap: 12px; padding: 0 4px; min-height: 60px; }
-.work-issue-main { display: flex; align-items: center; align-self: stretch; min-height: 60px; padding: 12px 0; }
+.work-issue-main { display: flex; align-items: center; align-self: stretch; min-height: 60px; padding: 12px 0; gap: 8px; }
+.github-issue-indicator { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; width: 16px; height: 16px; color: #aeb4bd; vertical-align: middle; }
+.task-code:has(.github-issue-indicator) { display: inline-flex; align-items: center; gap: 7px; }
 .work-project { border: 0; padding: 10px 0; background: transparent; text-align: left; min-width: 0; }
 .work-project:hover { color: #e1e3e7; }.work-assignee .avatar { width: 22px; height: 22px; font-size: 9px; }
 .board-header { gap: 12px; margin-bottom: 20px; }.board-header-actions { position: relative; gap: 8px; flex-wrap: nowrap; max-width: 100%; }

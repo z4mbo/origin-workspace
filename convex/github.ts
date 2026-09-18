@@ -315,13 +315,16 @@ export const upsertRepoSnapshot = internalMutation({
           githubIssueUrl: issue.url,
           githubIssueState: issue.state,
           githubIssueSyncedAt: now,
+          githubIssueUpdatedAt: issue.updatedAt,
           done: issue.state === "closed",
           columnId: todoColumn._id,
           updatedAt: issue.updatedAt || now,
         };
         if (existing) {
+          if ((existing.githubIssueUpdatedAt || 0) > issue.updatedAt) continue;
+          if (issue.state === "open" && existing.githubIssueState !== "closed") patch.done = existing.done;
           patch.columnId = existing.columnId;
-          await recordCompletion(ctx, existing, issue.state === "closed", issue.updatedAt);
+          await recordCompletion(ctx, existing, patch.done, issue.updatedAt);
           await ctx.db.patch(existing._id, patch);
           if (existing.done !== patch.done) await changeOpenIssueCount(ctx, args.projectId, patch.done ? -1 : 1);
         } else {
@@ -337,6 +340,7 @@ export const upsertRepoSnapshot = internalMutation({
             githubIssueUrl: issue.url,
             githubIssueState: issue.state,
             githubIssueSyncedAt: now,
+            githubIssueUpdatedAt: issue.updatedAt,
             order: nextOrder,
             createdAt: now,
             updatedAt: issue.updatedAt || now,

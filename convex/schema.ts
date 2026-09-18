@@ -173,6 +173,7 @@ export default defineSchema({
     githubIssueUrl: v.optional(v.string()),
     githubIssueState: v.optional(v.union(v.literal("open"), v.literal("closed"))),
     githubIssueSyncedAt: v.optional(v.number()),
+    githubIssueUpdatedAt: v.optional(v.number()),
     order: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
