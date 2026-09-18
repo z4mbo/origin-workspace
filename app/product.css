@@ -259,7 +259,7 @@
 .message-file.image-attachment span { padding: 4px; }
 .rich-composer { flex: 0 0 auto; border: 1px solid #363941; border-radius: 7px; padding: 12px 14px 8px; background: #17191d; margin-top: 8px; }
 .rich-composer:focus-within { border-color: #64758f; }
-.rich-composer > textarea { border: 0; box-shadow: none; background: none; padding: 0; resize: none; min-height: 46px; max-height: 160px; font-size: 13px; line-height: 1.65; }
+.rich-composer textarea { border: 0; box-shadow: none; background: none; padding: 0; resize: none; min-height: 46px; max-height: 160px; font-size: 13px; line-height: 1.65; }
 .rich-composer > footer, .rich-composer > footer > div { display: flex; align-items: center; gap: 4px; }
 .rich-composer > footer { justify-content: space-between; padding-top: 6px; }
 .rich-composer button { min-height: 28px; }
@@ -403,7 +403,7 @@
   .message-tools button:nth-child(n+3) { display: grid; }
   .conversation-message:focus-within .message-tools button { display: grid; }
   .rich-composer { padding: 10px 10px 7px; }
-  .rich-composer > textarea { font-size: 16px; }
+  .rich-composer textarea { font-size: 16px; }
   .message-file { padding: 8px; }
   .workspace-app .channel-header { align-items: flex-start; flex-wrap: wrap; gap: 14px; }
   .workspace-app .channel-header h1 { font-size: 23px; }
