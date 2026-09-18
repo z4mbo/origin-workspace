@@ -9,6 +9,8 @@ npx tsx scripts/test-chat-composer.ts
 npx tsx scripts/test-github-sync.ts
 npx tsx scripts/test-call-signaling.ts
 npx tsx scripts/test-dropped-content.ts
+npx tsx scripts/test-file-drop.ts
+npx tsx scripts/test-asset-uploads.ts
 npm run build
 ```
 

@@ -3,7 +3,7 @@ import { ContentSkeleton } from "./content-skeleton";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Copy, Eye, EyeOff, ExternalLink, File, Image, KeyRound, Loader2, LockKeyhole, Plus, Search, ShieldCheck, Shuffle, Trash2, Upload } from "lucide-react";
+import { Copy, Eye, EyeOff, ExternalLink, File, Image, KeyRound, Loader2, LockKeyhole, Plus, Search, ShieldCheck, Shuffle, Trash2, Upload, X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { decryptSecret, encryptSecret } from "@/lib/vaultCrypto";
@@ -11,6 +11,7 @@ import { Dialog } from "./dialog";
 import { useWorkspace } from "./workspace-context";
 import { useFileDrop } from "./use-file-drop";
 import { validateAttachmentFiles } from "@/lib/dropped-content";
+import { assetFileType, saveAssetFiles } from "@/lib/asset-uploads";
 
 type Props = { projectId: Id<"projects">; sessionToken: string };
 const kinds = { password: "Website login", api_key: "API key", secret: "Secret", note: "Secure note" };
@@ -86,27 +87,58 @@ export function AssetsPanel({ projectId, sessionToken }: Props) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [batch, setBatch] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const uploaded = useRef(new Map<File, Id<"_storage">>());
+  const inFlight = useRef(false);
   const [type, setType] = useState<Doc<"designAssets">["type"]>("image");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const selectFile = (file: File) => { try { validateAttachmentFiles([file]); setFile(file); setUrl(""); setName(file.name.slice(0, 150)); setType(file.type.startsWith("image/") ? "image" : "document"); setNotice(""); setOpen(true); } catch (error) { setNotice(error instanceof Error ? error.message : "Invalid file"); } };
-  const drop = useFileDrop({ disabled: workspace.role === "viewer" || busy, onFiles: files => { if (files.length !== 1) { setNotice("Add one asset at a time"); return; } selectFile(files[0]); }, onLink: url => { setFile(null); setUrl(url); setName(new URL(url).hostname); setType(new URL(url).hostname.endsWith("figma.com") ? "figma" : "document"); setNotice(""); setOpen(true); } });
-  const save = async (e: FormEvent) => {
-    e.preventDefault(); setBusy(true); setNotice("");
+  const [progress, setProgress] = useState("");
+  const resetForm = () => { setFiles([]); uploaded.current.clear(); setBatch(false); setName(""); setUrl(""); setNotes(""); setType("image"); setNotice(""); setProgress(""); };
+  const selectFiles = (selection: File[]) => {
+    if (inFlight.current || !selection.length) return;
     try {
-      if (!file && !url) throw new Error("Choose a file or enter a link");
-      if (file && file.size > 15 * 1024 * 1024) throw new Error("Choose a file under 15 MB");
-      let storageId: Id<"_storage"> | undefined;
-      if (file) { const response = await fetch(await upload({ projectId, sessionToken }), { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file }); if (!response.ok) throw new Error("Upload failed"); storageId = (await response.json()).storageId; }
-      await create({ projectId, sessionToken, type, name, url: url || undefined, storageId, notes: notes || undefined, contentType: file?.type || undefined, size: file?.size });
-      setOpen(false); setName(""); setUrl(""); setNotes(""); setFile(null);
+      validateAttachmentFiles(selection); resetForm(); setFiles(selection); setBatch(selection.length > 1);
+      setName(selection[0].name.slice(0, 150)); setType(assetFileType(selection[0])); setOpen(true);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Invalid file"); }
+  };
+  const drop = useFileDrop({ disabled: workspace.role === "viewer" || busy, onFiles: selectFiles, onLink: url => { resetForm(); setUrl(url); setName(new URL(url).hostname); setType(/(^|\.)figma\.com$/.test(new URL(url).hostname) ? "figma" : "document"); setOpen(true); } });
+  const save = async (e: FormEvent) => {
+    e.preventDefault(); if (inFlight.current) return;
+    inFlight.current = true; setBusy(true); setNotice("");
+    try {
+      if (!files.length && !url) throw new Error("Choose a file or enter a link");
+      if (files.length) {
+        await saveAssetFiles({ files, uploaded: uploaded.current,
+          upload: async file => {
+            const response = await fetch(await upload({ projectId, sessionToken }), { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+            if (!response.ok) throw new Error(`${file.name}: upload failed`);
+            return (await response.json()).storageId as Id<"_storage">;
+          },
+          save: async (file, storageId) => { await create({ projectId, sessionToken, type: batch ? assetFileType(file) : type, name: batch ? file.name.slice(0, 150) : name, storageId, notes: notes || undefined, contentType: file.type || undefined, size: file.size }); },
+          onSaved: file => setFiles(current => current.filter(item => item !== file)),
+          onProgress: (current, total) => setProgress(`Uploading ${current} of ${total}`),
+        });
+      } else await create({ projectId, sessionToken, type, name, url: url || undefined, notes: notes || undefined });
+      setOpen(false); resetForm(); setQuery(""); setFilter("all");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not save asset"); }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); setProgress(""); }
   };
   const filtered = design?.assets.filter(asset => (filter === "all" || asset.type === filter) && `${asset.name} ${asset.notes || ""}`.toLowerCase().includes(query.toLowerCase()));
-  return <section className={`project-library ${drop.dragging ? "drop-active" : ""}`} {...drop.handlers}><div className="library-toolbar"><label className="inline-search"><Search size={15} /><input aria-label="Search assets" placeholder="Search assets" value={query} onChange={e => setQuery(e.target.value)} /></label><div><select aria-label="Asset type" value={filter} onChange={e => setFilter(e.target.value)}>{["all", "image", "document", "figma", "icon", "font", "apk", "other"].map(t => <option key={t} value={t}>{t === "all" ? "All types" : t}</option>)}</select>{workspace.role !== "viewer" && <button className="primary-button compact" onClick={() => setOpen(true)}><Plus size={14} />Add asset</button>}</div></div>{notice && !open && <p className="notice" role="status">{notice}</p>}
+  return <section aria-label="Project assets" className={`project-library project-assets ${drop.dragging ? "drop-active" : ""}`} {...drop.handlers}><div className="library-toolbar"><label className="inline-search"><Search size={15} /><input aria-label="Search assets" placeholder="Search assets" value={query} onChange={e => setQuery(e.target.value)} /></label><div><select aria-label="Asset type" value={filter} onChange={e => setFilter(e.target.value)}>{["all", "image", "document", "figma", "icon", "font", "apk", "other"].map(t => <option key={t} value={t}>{t === "all" ? "All types" : t}</option>)}</select>{workspace.role !== "viewer" && <button className="primary-button compact" onClick={() => { resetForm(); setOpen(true); }}><Plus size={14} />Add asset</button>}</div></div>{notice && !open && <p className="notice" role="status">{notice}</p>}
     {design === undefined ? <ContentSkeleton label="Loading project files" /> : !filtered?.length ? <div className="library-empty"><Image size={24} /><h3>{query ? "No matching assets" : "No assets yet"}</h3></div> : <div className="asset-cards">{filtered.map(asset => <article className="asset-card" key={asset._id}><a className="asset-preview" href={asset.fileUrl || undefined} target="_blank" rel="noreferrer" aria-label={`Open ${asset.name}`}>{asset.fileUrl && (asset.type === "image" || asset.type === "icon") ? <img src={asset.fileUrl} alt={asset.name} loading="lazy" /> : <File size={30} />}</a><div className="asset-card-meta"><div><strong>{asset.name}</strong><small>{asset.type}{asset.size ? ` / ${Math.ceil(asset.size / 1024)} KB` : ""}</small></div>{asset.fileUrl && <a className="icon-button" href={asset.fileUrl} title="Open asset" aria-label={`Open ${asset.name}`} target="_blank" rel="noreferrer"><ExternalLink size={14} /></a>}{workspace.role !== "viewer" && <button className="icon-button" title="Delete asset" aria-label={`Delete ${asset.name}`} onClick={async () => { if (!window.confirm(`Delete ${asset.name}?`)) return; try { await remove({ projectId, sessionToken, assetId: asset._id }); } catch { setNotice("Could not delete asset"); } }}><Trash2 size={14} /></button>}</div>{asset.notes && <p>{asset.notes}</p>}</article>)}</div>}
-    {open && <Dialog title="Add asset" onClose={() => setOpen(false)}><form className="stack-form" onSubmit={save}><label className="asset-drop"><Upload size={24} /><span>{file?.name || "Choose a file"}</span><input type="file" onChange={e => { if (e.target.files?.[0]) selectFile(e.target.files[0]); }} /></label><label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={150} /></label><label>Type<select value={type} onChange={e => setType(e.target.value as typeof type)}>{["image", "document", "figma", "icon", "font", "apk", "other"].map(t => <option key={t}>{t}</option>)}</select></label><label>Link<input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://" /></label><label>Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} /></label>{notice && <p className="notice danger" role="alert">{notice}</p>}<button className="primary-button" disabled={busy}>{busy ? <Loader2 className="spin" size={15} /> : <Plus size={15} />}Save asset</button></form></Dialog>}
+    {open && <Dialog title={batch ? "Add assets" : "Add asset"} onClose={() => { if (!inFlight.current) setOpen(false); }}><form className="stack-form asset-upload-form" onSubmit={save}>
+      <fieldset className="asset-upload-fields" disabled={busy}>
+        <button type="button" aria-label="Choose asset files" className={`asset-drop ${drop.dragging ? "drop-active" : ""}`} onClick={() => fileInput.current?.click()}><Upload size={24} /><span>{files.length ? `${files.length} ${files.length === 1 ? "file" : "files"} selected` : "Choose files"}</span></button><input ref={fileInput} aria-label="Asset files" type="file" multiple hidden onChange={e => { selectFiles(Array.from(e.target.files || [])); e.target.value = ""; }} />
+        {!!files.length && <ul className="asset-upload-list">{files.map((file, index) => <li key={`${file.name}:${index}`}><File size={16} /><span title={file.name}>{file.name}</span><small>{Math.max(1, Math.ceil(file.size / 1024))} KB</small><button type="button" className="icon-button" title="Remove file" aria-label={`Remove ${file.name}`} onClick={() => { uploaded.current.delete(file); setFiles(current => current.filter(item => item !== file)); }}><X size={14} /></button></li>)}</ul>}
+        {!batch && <><label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={150} /></label><label>Type<select value={type} onChange={e => setType(e.target.value as typeof type)}>{["image", "document", "figma", "icon", "font", "apk", "other"].map(t => <option key={t}>{t}</option>)}</select></label>{!files.length && <label>Link<input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://" /></label>}</>}
+        <label>Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} /></label>
+      </fieldset>
+      {notice && <p className="notice danger" role="alert">{notice}</p>}
+      {busy && <span className="asset-upload-progress" role="status">{progress || "Saving asset"}</span>}
+      <button className="primary-button" disabled={busy || (batch && !files.length)}>{busy ? <Loader2 className="spin" size={15} /> : <Plus size={15} />}{batch ? `Save ${files.length} ${files.length === 1 ? "asset" : "assets"}` : "Save asset"}</button>
+    </form></Dialog>}
   </section>;
 }
