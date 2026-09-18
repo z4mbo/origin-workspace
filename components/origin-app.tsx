@@ -89,6 +89,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { localApi as requestLocalApi } from "@/lib/client-api";
 import { createCallSignaling } from "@/lib/call-signaling";
+import { isScreenTrack, selectCallFocus } from "@/lib/call-layout";
 
 const FeedbackView = dynamic(() => import("./feedback-view").then(module => module.FeedbackView), { loading: () => <ContentSkeleton rows={6} /> });
 
@@ -772,6 +773,7 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
   const [audioDevice, setAudioDevice] = useState("");
   const [videoDevice, setVideoDevice] = useState("");
   const [focusedTile, setFocusedTile] = useState<string | null>(null);
+  const previousScreensRef = useRef(new Set<string>());
   const screenRef = useRef<MediaStream | null>(null);
   const iceServersRef = useRef<RTCIceServer[]>([]);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -784,17 +786,6 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
   const joinedRef = useRef(false);
   const sharingRef = useRef(false);
   const mountedRef = useRef(true);
-
-  useEffect(() => {
-    setFocusedTile(current => {
-      if (!current) return current;
-      if (current === "self:camera") return localStream ? current : null;
-      if (current === "self:screen") return screenStream ? current : null;
-      const [userId, kind] = current.split(":");
-      const participant = participants?.find(item => item.userId === userId);
-      return participant && (kind !== "screen" || participant.screenSharing) ? current : null;
-    });
-  }, [localStream, screenStream, participants]);
 
   useEffect(() => {
     localStreamRef.current = localStream;
@@ -869,11 +860,13 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
     };
     connection.ontrack = (event) => {
       if (peerConnectionsRef.current.get(key) !== connection) return;
-      const screenTrack = connection.getTransceivers().filter(item => item.receiver.track.kind === "video")[1]?.receiver.track === event.track;
+      // Simultaneous offers can leave an extra reserved video slot before the incoming screen.
+      const screenTrack = isScreenTrack(connection.getTransceivers(), event.track);
       setRemoteStreams(current => {
         const stream = new MediaStream(current[key]?.stream.getTracks().filter(track => track.readyState === "live") || []);
         const screen = new MediaStream(current[key]?.screen?.getTracks().filter(track => track.readyState === "live") || []);
         const target = screenTrack ? screen : stream;
+        target.getTracks().filter(track => track.kind === event.track.kind && track !== event.track).forEach(track => target.removeTrack(track));
         if (!target.getTracks().includes(event.track)) target.addTrack(event.track);
         return { ...current, [key]: { stream, screen, addedAt: current[key]?.addedAt ?? Date.now() } };
       });
@@ -1111,6 +1104,24 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
 
   const activeParticipants = participants ?? [];
   const remoteParticipants = activeParticipants.filter((participant) => participant.userId !== user._id);
+  const callTiles: { id: string; stream?: MediaStream; participant: AvatarUser; label: string; audioEnabled: boolean; videoEnabled: boolean; screenSharing?: boolean }[] = localStream ? [
+    ...(screenStream ? [{ id: "self:screen", stream: screenStream, participant: user, label: "Your screen", audioEnabled: false, videoEnabled: true, screenSharing: true }] : []),
+    { id: "self:camera", stream: localStream, participant: user, label: "You", audioEnabled, videoEnabled },
+    ...remoteParticipants.flatMap(participant => {
+      const remote = remoteStreams[participant.userId];
+      return [
+        ...(participant.screenSharing && remote?.screen ? [{ id: `${participant.userId}:screen`, stream: remote.screen, participant, label: `${sidebarUsername(participant)}'s screen`, audioEnabled: false, videoEnabled: true, screenSharing: true }] : []),
+        { id: `${participant.userId}:camera`, stream: remote?.stream, participant, label: sidebarUsername(participant), audioEnabled: participant.audioEnabled, videoEnabled: participant.videoEnabled },
+      ];
+    }),
+  ] : [];
+  const selectedTileId = selectCallFocus(callTiles, focusedTile, previousScreensRef.current);
+  const mainTile = callTiles.find(tile => tile.id === selectedTileId);
+  const screenTileIds = callTiles.filter(tile => tile.screenSharing).map(tile => tile.id).join(",");
+  useEffect(() => {
+    setFocusedTile(selectedTileId);
+    previousScreensRef.current = new Set(screenTileIds ? screenTileIds.split(",") : []);
+  }, [selectedTileId, screenTileIds]);
   const changeDevice = async (kind: "audio" | "video", deviceId: string) => {
     const stream = localStreamRef.current;
     if (stream && (kind === "audio" ? audioEnabled : videoEnabled)) {
@@ -1130,9 +1141,12 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
   };
   return (
     <section className="voice-workspace">
-      <div className="call-utility-bar"><div className="call-participant-strip" aria-label="Call participants">{participants === undefined ? <ContentSkeleton label="Loading participants" rows={1} /> : activeParticipants.map(participant => <button key={participant.userId} className="call-participant-chip" title={participant.name} onClick={() => setFocusedTile(current => current === (participant.userId === user._id ? "self:camera" : `${participant.userId}:camera`) ? null : participant.userId === user._id ? "self:camera" : `${participant.userId}:camera`)}><UserAvatar user={participant.userId === user._id ? user : participant} size="small" /><span>{participant.userId === user._id ? "You" : sidebarUsername(participant)}</span></button>)}</div><div className="call-header-actions">{localStream ? <time className="call-elapsed">{Math.floor(elapsed / 60).toString().padStart(2, "0")}:{(elapsed % 60).toString().padStart(2, "0")}</time> : <button className="primary-button compact" onClick={startCall} disabled={joining || workspace.role === "viewer"}>{joining ? <Loader2 className="spin" size={15} /> : <Video size={15} />}Join call</button>}<button className="icon-button" title="Call devices" aria-label="Call devices" aria-expanded={devicesOpen} onClick={() => setDevicesOpen(!devicesOpen)}><Settings2 size={16} /></button></div></div>
+      <div className="call-utility-bar"><div className="call-participant-strip" aria-label="Call participants">{participants === undefined ? <ContentSkeleton label="Loading participants" rows={1} /> : activeParticipants.map(participant => <button key={participant.userId} className="call-participant-chip" title={participant.name} onClick={() => setFocusedTile(participant.userId === user._id ? "self:camera" : `${participant.userId}:camera`)}><UserAvatar user={participant.userId === user._id ? user : participant} size="small" /><span>{participant.userId === user._id ? "You" : sidebarUsername(participant)}</span></button>)}</div><div className="call-header-actions">{localStream ? <time className="call-elapsed">{Math.floor(elapsed / 60).toString().padStart(2, "0")}:{(elapsed % 60).toString().padStart(2, "0")}</time> : <button className="primary-button compact" onClick={startCall} disabled={joining || workspace.role === "viewer"}>{joining ? <Loader2 className="spin" size={15} /> : <Video size={15} />}Join call</button>}<button className="icon-button" title="Call devices" aria-label="Call devices" aria-expanded={devicesOpen} onClick={() => setDevicesOpen(!devicesOpen)}><Settings2 size={16} /></button></div></div>
       {devicesOpen && <CallDevices audioId={audioDevice} videoId={videoDevice} inCall={!!localStream} onChange={changeDevice} onClose={() => setDevicesOpen(false)} />}
       <div className="call-dock" hidden={!localStream}>
+        <div className="call-filmstrip" aria-label="Other cameras and shared screens">
+          {callTiles.filter(tile => tile.id !== selectedTileId).map(tile => <CallVideoTile key={tile.id} {...tile} thumbnail onFocus={() => setFocusedTile(tile.id)} />)}
+        </div>
         <div className="call-controls">
           {localStream ? (
             <>
@@ -1147,25 +1161,15 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
         </div>
       </div>
       <div className="voice-workspace-grid">
-        <div className={clsx("voice-room stage", localStream && "in-call", focusedTile && "has-focused-tile", (screenStream || remoteParticipants.some(participant => participant.screenSharing)) && "has-screen-share")} data-single={!screenStream && !remoteParticipants.length} style={focusedTile ? { gridTemplateRows: `repeat(${Math.max(1, remoteParticipants.length + remoteParticipants.filter(participant => participant.screenSharing && remoteStreams[participant.userId]?.screen).length + (screenStream ? 1 : 0))}, minmax(80px, 1fr))` } : undefined}>
-          {localStream ? (
-            <>
-              {screenStream && <CallVideoTile stream={screenStream} participant={user} muted label="Your screen" audioEnabled={false} videoEnabled screenSharing focused={focusedTile === "self:screen"} onFocus={() => setFocusedTile(focusedTile === "self:screen" ? null : "self:screen")} />}
-              <CallVideoTile stream={localStream} participant={user} muted label="You" audioEnabled={audioEnabled} videoEnabled={videoEnabled} focused={focusedTile === "self:camera"} onFocus={() => setFocusedTile(focusedTile === "self:camera" ? null : "self:camera")} />
-              {remoteParticipants.map(participant => {
-                const remote = remoteStreams[participant.userId.toString()];
-                const cameraId = `${participant.userId}:camera`, screenId = `${participant.userId}:screen`;
-                return <div className="call-peer-tiles" key={participant.userId}>
-                  {participant.screenSharing && remote?.screen && <CallVideoTile stream={remote.screen} participant={participant} muted label={`${sidebarUsername(participant)}'s screen`} audioEnabled={false} videoEnabled screenSharing focused={focusedTile === screenId} onFocus={() => setFocusedTile(focusedTile === screenId ? null : screenId)} />}
-                  {remote ? <CallVideoTile stream={remote.stream} participant={participant} audioEnabled={participant.audioEnabled} videoEnabled={participant.videoEnabled} focused={focusedTile === cameraId} onFocus={() => setFocusedTile(focusedTile === cameraId ? null : cameraId)} /> : <div className="call-tile connecting"><UserAvatar user={participant} /><span>{sidebarUsername(participant)}</span><small>Connecting</small></div>}
-                </div>;
-              })}
-            </>
+        <div className={clsx("voice-room stage", localStream && "in-call call-main-stage")}>
+          {mainTile ? (
+            <CallVideoTile key={mainTile.id} {...mainTile} />
           ) : (
             <div className="call-lobby"><div className="lobby-avatar"><UserAvatar user={user} /></div><h2>{activeParticipants.length ? "Your team is here" : "Ready when you are"}</h2><div className="lobby-devices"><button title={audioEnabled ? "Microphone on" : "Microphone off"} aria-label={audioEnabled ? "Disable microphone before joining" : "Enable microphone before joining"} aria-pressed={audioEnabled} onClick={() => setAudioEnabled(!audioEnabled)}>{audioEnabled ? <Mic size={20} /> : <MicOff size={20} />}</button><button title={videoEnabled ? "Camera on" : "Camera off"} aria-label={videoEnabled ? "Disable camera before joining" : "Enable camera before joining"} aria-pressed={videoEnabled} onClick={() => setVideoEnabled(!videoEnabled)}>{videoEnabled ? <Video size={20} /> : <VideoOff size={20} />}</button></div><button className="ghost-button compact" onClick={() => setDevicesOpen(true)}><Settings2 size={14} />Check devices</button></div>
           )}
         </div>
       </div>
+      <div className="call-audio-output">{localStream && remoteParticipants.map(participant => remoteStreams[participant.userId] && <CallAudio key={participant.userId} stream={remoteStreams[participant.userId].stream} name={participant.name} />)}</div>
       {notice ? <small className="call-notice">{notice}</small> : null}
     </section>
   );
@@ -1174,40 +1178,37 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
 function CallVideoTile({
   stream,
   participant,
-  muted = false,
   label,
   audioEnabled,
   videoEnabled,
   screenSharing = false,
-  focused = false,
+  thumbnail = false,
   onFocus,
 }: {
-  stream: MediaStream;
+  stream?: MediaStream;
   participant: AvatarUser;
-  muted?: boolean;
   label?: string;
   audioEnabled: boolean;
   videoEnabled: boolean;
   screenSharing?: boolean;
-  focused?: boolean;
-  onFocus: () => void;
+  thumbnail?: boolean;
+  onFocus?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const tileRef = useRef<HTMLDivElement | null>(null);
   const [fullscreenError, setFullscreenError] = useState("");
   const openMember = useMemberProfile();
   useEffect(() => {
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    if (videoRef.current) videoRef.current.srcObject = stream ?? null;
   }, [stream]);
   return (
-    <div ref={tileRef} className={clsx("call-tile", !videoEnabled && "video-off", screenSharing && "screen-share-tile", focused && "focused-call-tile")}>
-      <button className="call-tile-focus" aria-label={`${focused ? "Reduce" : "Enlarge"} ${label || participant.name}`} aria-pressed={focused} onClick={onFocus} />
-      <video ref={videoRef} autoPlay muted playsInline style={!videoEnabled ? { position: "absolute", width: 1, height: 1, opacity: 0 } : undefined} />{!videoEnabled && <div className="video-avatar"><UserAvatar user={participant} /></div>}
-      {!muted && <CallAudio stream={stream} name={participant.name} />}
+    <div ref={tileRef} className={clsx("call-tile", (!videoEnabled || !stream) && "video-off", screenSharing && "screen-share-tile", thumbnail && "call-thumbnail")}>
+      {thumbnail && <button type="button" className="call-tile-focus" title={`Enlarge ${label || participant.name}`} aria-label={`Enlarge ${label || participant.name}`} onClick={onFocus} />}
+      <video ref={videoRef} autoPlay muted playsInline style={!videoEnabled || !stream ? { position: "absolute", width: 1, height: 1, opacity: 0 } : undefined} />{(!videoEnabled || !stream) && <div className="video-avatar"><UserAvatar user={participant} />{!stream && <small>Connecting</small>}</div>}
       <div className="call-tile-meta">
-        <button className="call-member-profile" onClick={() => openMember(participant.email)} aria-label={`View ${participant.name} profile`}>{label ?? displayUsername(participant)}</button>
-        {audioEnabled ? <Mic size={13} /> : <MicOff size={13} />}
-        {videoEnabled && <button className="icon-button call-fullscreen" title="Full screen" aria-label={`Full screen ${label || participant.name}`} onClick={() => { if (!tileRef.current?.requestFullscreen) { setFullscreenError("Full screen is unavailable in this browser"); return; } void tileRef.current.requestFullscreen().catch(() => setFullscreenError("Could not enter full screen")); }}><Maximize2 size={14} /></button>}
+        {thumbnail ? <span className="call-thumbnail-name">{label ?? displayUsername(participant)}</span> : <button className="call-member-profile" onClick={() => openMember(participant.email)} aria-label={`View ${participant.name} profile`}>{label ?? displayUsername(participant)}</button>}
+        {screenSharing ? <MonitorUp size={13} /> : audioEnabled ? <Mic size={13} /> : <MicOff size={13} />}
+        {!thumbnail && videoEnabled && stream && <button className="icon-button call-fullscreen" title="Full screen" aria-label={`Full screen ${label || participant.name}`} onClick={() => { if (!tileRef.current?.requestFullscreen) { setFullscreenError("Full screen is unavailable in this browser"); return; } void tileRef.current.requestFullscreen().catch(() => setFullscreenError("Could not enter full screen")); }}><Maximize2 size={14} /></button>}
       </div>
       {fullscreenError && <small className="call-tile-error" role="status">{fullscreenError}</small>}
     </div>

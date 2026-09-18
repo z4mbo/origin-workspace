@@ -4,6 +4,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -56,6 +57,7 @@ import {
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { IssueComposer } from "./issue-composer";
+import { activeChatTags, chatTextParts } from "@/lib/chat-text";
 const drafts = new Map<string, string>();
 
 type User = {
@@ -141,6 +143,9 @@ export function ChatThread({
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const highlightsRef = useRef<HTMLDivElement>(null);
+  const draftParts = useMemo(() => chatTextParts(body, editing?.mentions ?? mentions, editing?.references ?? references), [body, editing, mentions, references]);
+  const activeTags = activeChatTags(draftParts);
   const uploadRef = useRef<HTMLInputElement>(null);
   const scope = `teamId=${workspace._id}${conversation ? `&conversation=${encodeURIComponent(conversation)}` : ""}`;
   const endpoint = `/api/local-chat/messages?${scope}`;
@@ -187,27 +192,29 @@ export function ChatThread({
   const chooseSuggestion = (option: ChatSuggestion) => {
     if (
       !trigger ||
-      (option.member && mentions.length >= 20) ||
-      (option.reference && references.length >= 12)
+      (option.member && !activeTags.mentionIds.has(option.member.userId!) && activeTags.mentionIds.size >= 20) ||
+      (option.reference && !activeTags.referenceIds.has(option.reference.id) && activeTags.referenceIds.size >= 12)
     )
       return;
     const next = insertChatTag(body, trigger, option.label);
     if (next.text.length > 8000) return;
     if (option.member?.userId)
-      setMentions((current) =>
-        current.some((m) => m.userId === option.member!.userId)
+      setMentions((previous) => {
+        const current = previous.filter(m => activeTags.mentionIds.has(m.userId));
+        return current.some((m) => m.userId === option.member!.userId)
           ? current
           : [
               ...current,
               { userId: option.member!.userId!, name: option.label },
-            ],
-      );
+            ];
+      });
     if (option.reference)
-      setReferences((current) =>
-        current.some((r) => r.id === option.reference!.id)
+      setReferences((previous) => {
+        const current = previous.filter(r => activeTags.referenceIds.has(r.id));
+        return current.some((r) => r.id === option.reference!.id)
           ? current
-          : [...current, option.reference!],
-      );
+          : [...current, option.reference!];
+      });
     setBody(next.text);
     setTrigger(null);
     requestAnimationFrame(() => {
@@ -249,6 +256,7 @@ export function ChatThread({
     if (input) {
       input.style.height = "0px";
       input.style.height = `${Math.min(160, Math.max(40, input.scrollHeight))}px`;
+      if (highlightsRef.current) highlightsRef.current.scrollTop = input.scrollTop;
     }
   }, [body, draftKey, editing]);
   const markRead = useCallback(
@@ -401,10 +409,7 @@ export function ChatThread({
       !canWrite ||
       sendLock.current ||
       uploadLock.current ||
-      (!body.trim() &&
-        !attachments.length &&
-        !references.length &&
-        !mentions.length)
+      (!body.trim() && !attachments.length)
     )
       return;
     sendLock.current = true;
@@ -423,8 +428,8 @@ export function ChatThread({
           json: {
             body,
             attachmentIds: attachments.map((f) => f.id),
-            references,
-            mentionUserIds: mentions.map((m) => m.userId),
+            references: references.filter(r => activeTags.referenceIds.has(r.id)),
+            mentionUserIds: [...activeTags.mentionIds],
             replyTo: reply?.id,
           },
         });
@@ -624,50 +629,15 @@ export function ChatThread({
                       <span>{replyMessage.body || "Attachment"}</span>
                     </button>
                   )}
-                  <p>{message.body}</p>
-                  {message.mentions?.length ? (
-                    <div className="message-mentions">
-                      {message.mentions.map((mention) => (
-                        <button
-                          key={mention.userId}
-                          onClick={() => {
-                            const target = members?.find(
-                              (m) => m.userId === mention.userId,
-                            );
-                            if (target) openMember(target.email);
-                          }}
-                        >
-                          <AtSign size={12} />
-                          {members?.find((m) => m.userId === mention.userId)
-                            ?.username || mention.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {message.references?.length ? (
-                    <div className="message-references">
-                      {message.references.map((ref) => (
-                        <button
-                          key={ref.id}
-                          onClick={() =>
-                            onOpenReference(
-                              ref.projectId as Id<"projects">,
-                              ref.type === "issue"
-                                ? (ref.id as Id<"tasks">)
-                                : undefined,
-                            )
-                          }
-                        >
-                          {ref.type === "project" ? (
-                            <Hash size={13} />
-                          ) : (
-                            <Circle size={13} />
-                          )}
-                          {ref.label}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                  <p className="chat-message-text">{chatTextParts(message.body, message.mentions, message.references).map((part, index) => {
+                    if (part.kind === "link") return <a key={index} href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>;
+                    if (part.kind === "mention") {
+                      const target = members?.find(member => member.userId === part.mention.userId);
+                      return <button key={index} type="button" className="chat-inline-tag" disabled={!target} onClick={() => target && openMember(target.email)}>{part.text}</button>;
+                    }
+                    if (part.kind === "reference") return <button key={index} type="button" className="chat-inline-tag chat-inline-reference" onClick={() => onOpenReference(part.reference.projectId as Id<"projects">, part.reference.type === "issue" ? part.reference.id as Id<"tasks"> : undefined)}>{part.text}</button>;
+                    return <Fragment key={index}>{part.text}</Fragment>;
+                  })}</p>
                   {message.attachments?.length ? (
                     <div className="message-files">
                       {message.attachments.map((file) => (
@@ -830,8 +800,8 @@ export function ChatThread({
                   aria-selected={index === activeSuggestion}
                   disabled={
                     option.member
-                      ? mentions.length >= 20
-                      : references.length >= 12
+                      ? !activeTags.mentionIds.has(option.member.userId!) && activeTags.mentionIds.size >= 20
+                      : Boolean(option.reference && !activeTags.referenceIds.has(option.reference.id) && activeTags.referenceIds.size >= 12)
                   }
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => chooseSuggestion(option)}
@@ -868,27 +838,6 @@ export function ChatThread({
             )}
           </div>
         )}
-        {mentions.length > 0 && (
-          <div className="composer-attachments">
-            {mentions.map((m) => (
-              <span key={m.userId}>
-                <AtSign size={13} />
-                {m.name}
-                <button
-                  type="button"
-                  aria-label={`Remove mention ${m.name}`}
-                  onClick={() =>
-                    setMentions((current) =>
-                      current.filter((x) => x.userId !== m.userId),
-                    )
-                  }
-                >
-                  <X size={13} />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
         {(reply || editing) && (
           <div className="composer-context">
             <Reply size={14} />
@@ -910,7 +859,7 @@ export function ChatThread({
             </button>
           </div>
         )}
-        {(attachments.length > 0 || references.length > 0) && (
+        {attachments.length > 0 && (
           <div className="composer-attachments">
             {attachments.map((file) => (
               <span key={file.id}>
@@ -929,28 +878,14 @@ export function ChatThread({
                 </button>
               </span>
             ))}
-            {references.map((ref) => (
-              <span key={ref.id}>
-                <Hash size={13} />
-                {ref.label}
-                <button
-                  type="button"
-                  aria-label={`Remove ${ref.label}`}
-                  onClick={() =>
-                    setReferences((current) =>
-                      current.filter((r) => r.id !== ref.id),
-                    )
-                  }
-                >
-                  <X size={13} />
-                </button>
-              </span>
-            ))}
           </div>
         )}
+        <div className="chat-composer-input">
+        <div ref={highlightsRef} className="chat-composer-highlights" aria-hidden="true">{draftParts.map((part, index) => part.kind === "mention" || part.kind === "reference" ? <mark key={index} className={part.kind === "reference" ? "reference-highlight" : undefined}>{part.text}</mark> : <Fragment key={index}>{part.text}</Fragment>)}{"\n"}</div>
         <textarea
           ref={inputRef}
           value={body}
+          onScroll={(event) => { if (highlightsRef.current) highlightsRef.current.scrollTop = event.currentTarget.scrollTop; }}
           onChange={(e) => {
             setBody(e.target.value);
             updateTrigger(e.target.value, e.target.selectionStart);
@@ -1022,6 +957,7 @@ export function ChatThread({
           maxLength={8000}
           aria-label="Message"
         />
+        </div>
         <footer>
           <div>
             <input
@@ -1084,10 +1020,7 @@ export function ChatThread({
               !canWrite ||
               sending ||
               uploading ||
-              (!body.trim() &&
-                !attachments.length &&
-                !references.length &&
-                !mentions.length)
+              (!body.trim() && !attachments.length)
             }
           >
             {sending ? (
