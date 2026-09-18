@@ -57,7 +57,7 @@ import {
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { IssueComposer } from "./issue-composer";
-import { activeChatTags, chatTextParts } from "@/lib/chat-text";
+import { activeChatTags, chatMessageParts, chatTextParts } from "@/lib/chat-text";
 const drafts = new Map<string, string>();
 
 type User = {
@@ -629,7 +629,7 @@ export function ChatThread({
                       <span>{replyMessage.body || "Attachment"}</span>
                     </button>
                   )}
-                  <p className="chat-message-text">{chatTextParts(message.body, message.mentions, message.references).map((part, index) => {
+                  <p className="chat-message-text">{chatMessageParts(message.body, message.mentions, message.references).map((part, index) => {
                     if (part.kind === "link") return <a key={index} href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>;
                     if (part.kind === "mention") {
                       const target = members?.find(member => member.userId === part.mention.userId);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { activeChatTags, chatTextParts } from "../lib/chat-text";
+import { activeChatTags, chatMessageParts, chatTextParts } from "../lib/chat-text";
 import type { ChatMention, ChatReference } from "../lib/localRealtime";
 
 const mentions = [{ userId: "sam", name: "sam" }, { userId: "sam-long", name: "sam-long" }, { userId: "zoe", name: "Zoë Lee" }] as ChatMention[];
@@ -22,4 +22,7 @@ assert.deepEqual(parse("See www.example.com, example.com/path and https://exampl
 assert.equal(parse('javascript:alert(1) data:text/html,<script>alert(1)</script> file:///etc/passwd').some(part => part.kind === "link"), false);
 assert.equal(parse('<script>alert("x")</script>').map(part => part.text).join(""), '<script>alert("x")</script>');
 assert.equal(parse("https://example.com/" + "a".repeat(4000)).filter(part => part.kind === "link").length, 1);
+assert.equal(chatMessageParts("Review this", [mentions[0]], [references[0]]).map(part => part.text).join(""), "Review this @sam #Origin.com");
+assert.equal(chatMessageParts("@sam #Origin.com", [mentions[0]], [references[0]]).map(part => part.text).join(""), "@sam #Origin.com");
+assert.equal(chatMessageParts("", [], [references[0]]).map(part => part.text).join(""), "#Origin.com");
 console.log("Chat text tests passed: inline tags, URL boundaries, safe links, literal text, removed tags.");
