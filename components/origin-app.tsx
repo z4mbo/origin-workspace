@@ -60,6 +60,9 @@ import { MemberProfileContext, useMemberProfile, useWorkspace, type Workspace } 
 import { MemberProfile } from "./member-profile";
 import { useModalKeyboard } from "./use-modal-keyboard";
 import { GitHubConnection } from "./github-connection";
+import { GitHubIssueIndicator } from "./github-issue-indicator";
+import { IssueFileUpload } from "./issue-file-upload";
+import { LocalAttachment } from "./local-attachment";
 import { RepositoryProvisioning } from "./repository-provisioning";
 import { useNotifications } from "./use-notifications";
 import { IssueRelations } from "./issue-relations";
@@ -72,6 +75,7 @@ import { Dialog } from "./dialog";
 import { IssueComposer } from "./issue-composer";
 import { InboxView } from "./inbox-view";
 import { CallDevices } from "./call-devices";
+import { CallAudio } from "./call-audio";
 import { IssueFields } from "./issue-fields";
 import { WorkspaceSettings, WorkspaceMembers } from "./workspace-settings";
 import { AssetsPanel, VaultPanel } from "./project-library";
@@ -84,10 +88,8 @@ import { CreateWorkspaceDialog } from "./create-workspace-dialog";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { localApi as requestLocalApi } from "@/lib/client-api";
+import { createCallSignaling } from "@/lib/call-signaling";
 
-const DocsView = dynamic(() => import("./docs-view").then(module => module.DocsView), { loading: () => <ContentSkeleton rows={6} /> });
-const RoadmapView = dynamic(() => import("./planning-view").then(module => module.RoadmapView), { loading: () => <ContentSkeleton rows={6} /> });
-const ReleasesView = dynamic(() => import("./planning-view").then(module => module.ReleasesView), { loading: () => <ContentSkeleton rows={6} /> });
 const FeedbackView = dynamic(() => import("./feedback-view").then(module => module.FeedbackView), { loading: () => <ContentSkeleton rows={6} /> });
 
 type AuthUser = {
@@ -100,8 +102,8 @@ type AuthUser = {
   status: "active" | "disabled";
 };
 type AuthSession = { sessionToken: string; user: AuthUser };
-type TabKey = "board" | "repo" | "assets" | "vault" | "team" | "settings";
-type MainView = "project" | "inbox" | "chat" | "voice" | "draw" | "docs" | "roadmap" | "feedback" | "releases";
+type TabKey = "board" | "repo" | "assets" | "vault" | "team" | "feedback" | "settings";
+type MainView = "project" | "inbox" | "chat" | "voice" | "draw";
 type Role = "admin" | "member" | "viewer";
 type Priority = "low" | "medium" | "high";
 type CredentialKind = "password" | "api_key" | "secret" | "note";
@@ -137,6 +139,8 @@ type LocalVoiceSignal = {
   id: string;
   fromUserId: Id<"users">;
   toUserId: Id<"users">;
+  fromJoinedAt?: number;
+  toJoinedAt?: number;
   kind: "offer" | "answer" | "candidate";
   payload: string;
   createdAt: number;
@@ -157,6 +161,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof Columns3 }> = [
   { key: "assets", label: "Assets", icon: Paperclip },
   { key: "vault", label: "Vault", icon: LockKeyhole },
   { key: "team", label: "Team", icon: Users },
+  { key: "feedback", label: "Feedback", icon: MessageCircle },
   { key: "settings", label: "Settings", icon: Settings2 },
 ];
 const roles: Role[] = ["admin", "member", "viewer"];
@@ -317,7 +322,7 @@ function useLocalVoiceParticipants(sessionToken: string | null, enabled = true) 
         const result = await localApi<{ participants: LocalVoiceParticipant[] }>(`/api/local-voice/participants?teamId=${workspace._id}`, sessionToken);
         if (alive) setParticipants(result.participants);
       } catch {
-        if (alive) setParticipants([]);
+        if (alive) setParticipants(current => current ?? []);
       }
     };
     void load();
@@ -387,7 +392,6 @@ export function OriginWorkspace({ sessionToken, user, workspaces, onLogout }: { 
   };
   const [shellNotice, setShellNotice] = useState("");
   const [chatFocus, setChatFocus] = useState<string | undefined>();
-  const [documentId, setDocumentId] = useState<Id<"wikiPages"> | undefined>();
   const notifications = useNotifications(sessionToken, workspace._id, user._id);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [memberEmail, setMemberEmail] = useState<string | null>(null);
@@ -417,9 +421,7 @@ export function OriginWorkspace({ sessionToken, user, workspaces, onLogout }: { 
     const githubStatus = params.get("github");
     if (githubStatus) setShellNotice(githubStatus === "connected" ? "GitHub connected to this workspace." : githubStatus === "app-ready" ? "GitHub App ready. Open Settings > Integrations to connect your workspace." : "GitHub connection was not completed. Try again from Settings > Integrations.");
     const view = params.get("view");
-    if (view && ["chat", "voice", "draw", "inbox", "docs", "roadmap", "feedback", "releases"].includes(view)) setMainView(view as MainView);
-    const doc = params.get("doc");
-    if (doc) setDocumentId(doc as Id<"wikiPages">);
+    if (view && ["chat", "voice", "draw", "inbox"].includes(view)) setMainView(view as MainView);
     const project = params.get("project");
     if (project) setActiveProjectId(project as Id<"projects">);
     const issue = params.get("issue");
@@ -463,7 +465,7 @@ export function OriginWorkspace({ sessionToken, user, workspaces, onLogout }: { 
 
   return (
     <MemberProfileContext.Provider value={setMemberEmail}><div className={clsx("app-shell", "workspace-app", mobileOpen && "mobile-nav-open", sidebarCollapsed && !sidebarHover && "sidebar-hidden", sidebarCollapsed && sidebarHover && "sidebar-floating")}>
-      <header className="mobile-topbar"><button className="icon-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu size={20} /></button><button className="icon-button" aria-label="Create issue" onClick={() => setIssueOpen(true)}><Plus size={20} /></button></header>
+      <header className="mobile-topbar"><button className="icon-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu size={20} /></button><strong className="mobile-project-name">{mainView === "project" ? projects?.find(project => project._id === activeProjectId)?.name : ""}</strong>{workspace.role !== "viewer" && <button className="icon-button" aria-label="Create issue" onClick={() => setIssueOpen(true)}><Plus size={20} /></button>}</header>
       {mobileOpen && <button className="mobile-nav-scrim" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
       {sidebarCollapsed ? <div className="sidebar-hover-zone" onMouseEnter={() => setSidebarHover(true)} /> : null}
       <aside className="sidebar" onMouseLeave={() => { if (sidebarCollapsed) setSidebarHover(false); }}>
@@ -500,10 +502,6 @@ export function OriginWorkspace({ sessionToken, user, workspaces, onLogout }: { 
             <small>{voiceParticipants?.length ?? 0}</small>
           </button>
           <button className={clsx("nav-item", mainView === "draw" && "active")} type="button" onClick={() => openView("draw")}><PenTool size={16} /><span>Draw</span></button>
-          <button className={clsx("nav-item", mainView === "docs" && "active")} type="button" onClick={() => openView("docs")}><FileText size={16} /><span>Docs</span></button>
-          <button className={clsx("nav-item", mainView === "roadmap" && "active")} type="button" onClick={() => openView("roadmap")}><Flag size={16} /><span>Roadmap</span></button>
-          <button className={clsx("nav-item", mainView === "feedback" && "active")} type="button" onClick={() => openView("feedback")}><MessageCircle size={16} /><span>Feedback</span></button>
-          <button className={clsx("nav-item", mainView === "releases" && "active")} type="button" onClick={() => openView("releases")}><Rocket size={16} /><span>Releases</span></button>
           </nav>
           <div className="sidebar-section">
             <div className="sidebar-section-head">
@@ -553,11 +551,7 @@ export function OriginWorkspace({ sessionToken, user, workspaces, onLogout }: { 
         ) : mainView === "draw" || mainView === "voice" ? null
         : mainView === "inbox" ? (
           <InboxView sessionToken={sessionToken} unread={notifications.summary?.unread || 0} onOpenProject={openProject} onOpenChat={messageId => { setChatFocus(messageId); openView("chat"); }} onOpenTask={(projectId, taskId) => setLinkedTask({ projectId, taskId })} />
-        ) : mainView === "docs" ? <DocsView sessionToken={sessionToken} initialPageId={documentId} />
-        : mainView === "roadmap" ? <RoadmapView sessionToken={sessionToken} onOpenTask={(projectId, taskId) => setLinkedTask({ projectId, taskId })} />
-        : mainView === "feedback" ? <FeedbackView sessionToken={sessionToken} onOpenTask={(projectId, taskId) => setLinkedTask({ projectId, taskId })} />
-        : mainView === "releases" ? <ReleasesView sessionToken={sessionToken} onOpenTask={(projectId, taskId) => setLinkedTask({ projectId, taskId })} />
-        : activeProjectId ? (
+        ) : activeProjectId ? (
           <ProjectWorkspace key={activeProjectId} projectId={activeProjectId} sessionToken={sessionToken} user={user} />
         ) : (
           <EmptyProjects sessionToken={sessionToken} onCreated={openProject} />
@@ -576,7 +570,6 @@ export function OriginWorkspace({ sessionToken, user, workspaces, onLogout }: { 
           sessionToken={sessionToken}
           onClose={() => setSearchOpen(false)}
           onOpenProject={openProject}
-          onOpenDocument={pageId => { setDocumentId(pageId); openView("docs"); }}
           onOpenChat={messageId => { setChatFocus(messageId); openView("chat"); }}
           onOpenTask={(projectId, taskId) => { openProject(projectId); setLinkedTask({ projectId, taskId }); }}
         />
@@ -714,7 +707,6 @@ function SearchDialog({
   onClose,
   onOpenProject,
   onOpenTask,
-  onOpenDocument,
   onOpenChat,
 }: {
   activeProjectId: Id<"projects"> | null;
@@ -723,7 +715,6 @@ function SearchDialog({
   onClose: () => void;
   onOpenProject: (id: Id<"projects">) => void;
   onOpenTask: (projectId: Id<"projects">, taskId: Id<"tasks">) => void;
-  onOpenDocument: (id: Id<"wikiPages">) => void;
   onOpenChat: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -732,7 +723,6 @@ function SearchDialog({
   const workspace = useWorkspace();
   const openMember = useMemberProfile();
   const issueResults = useQuery(api.workspaceSearch.issues, { sessionToken, teamId: workspace._id, text: query });
-  const documents = useQuery(api.workspaceSearch.documents, { sessionToken, teamId: workspace._id, text: query });
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [chatSearchError, setChatSearchError] = useState("");
   useEffect(() => {
@@ -751,12 +741,11 @@ function SearchDialog({
   return (
     <div className="modal-backdrop search-backdrop" onClick={onClose}>
       <section ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Search" className="search-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="search-input-row"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects, issues, people, docs, chat" maxLength={160} autoFocus /><button type="button" aria-label="Close search" onClick={onClose}><X size={16} /></button></div>
+        <div className="search-input-row"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects, issues, people, chat" maxLength={160} autoFocus /><button type="button" aria-label="Close search" onClick={onClose}><X size={16} /></button></div>
         <div className="search-results">
           <div><div className="section-label">Projects</div>{projectResults.map((project) => <button type="button" key={project._id} onClick={() => { onOpenProject(project._id); onClose(); }}><ProjectIcon project={project} /><span>{project.name}</span></button>)}</div>
           <div><div className="section-label">Issues</div>{issueResults?.slice(0, 10).map((task) => <button type="button" key={task._id} onClick={() => { onOpenTask(task.projectId, task._id); onClose(); }}><span className="task-code">{taskKey(task._id)}</span><span>{task.title}</span></button>)}</div>
           <div><div className="section-label">Teammates</div>{memberResults?.map((member) => <button type="button" key={member._id} onClick={() => { onClose(); openMember(member.email); }}>{member.avatarUrl ? <img className="avatar small" src={member.avatarUrl} alt="" /> : <span className="avatar small">{initials(member.name || member.email)}</span>}<span>{member.name || member.email}</span></button>)}</div>
-          <div><div className="section-label">Documents</div>{documents?.map(page => <button key={page._id} type="button" onClick={() => { onOpenDocument(page._id); onClose(); }}><FileText size={15} /><span>{page.title}</span></button>)}</div>
           {value.length > 1 && <div><div className="section-label">Workspace chat</div>{messages.map(message => <button key={message.id} type="button" onClick={() => { onOpenChat(message.id); onClose(); }}><MessageCircle size={15} /><span>{message.body.slice(0, 180)}</span></button>)}{chatSearchError && <p className="muted">{chatSearchError}</p>}</div>}
         </div>
       </section>
@@ -787,7 +776,10 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
   const iceServersRef = useRef<RTCIceServer[]>([]);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef(new Map<string, RTCPeerConnection>());
-  const pendingCandidatesRef = useRef(new Map<string, RTCIceCandidateInit[]>());
+  const signalingRef = useRef(new Map<string, ReturnType<typeof createCallSignaling>>());
+  const peerSessionsRef = useRef(new Map<string, number>());
+  const ownSessionRef = useRef(0);
+  const restartTimersRef = useRef(new Map<string, number>());
   const processedSignalsRef = useRef(new Set<string>());
   const joinedRef = useRef(false);
   const sharingRef = useRef(false);
@@ -818,7 +810,9 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
       screenRef.current?.getTracks().forEach((track) => track.stop());
       peerConnectionsRef.current.forEach((connection) => connection.close());
       peerConnectionsRef.current.clear();
-      pendingCandidatesRef.current.clear();
+      signalingRef.current.forEach(signaling => signaling.dispose());
+      signalingRef.current.clear(); peerSessionsRef.current.clear();
+      restartTimersRef.current.forEach(timer => window.clearTimeout(timer)); restartTimersRef.current.clear();
       processedSignalsRef.current.clear();
       if (wasJoined) {
         void localApi("/api/local-voice/participants", sessionToken, { method: "POST", json: { action: "leave" } }).catch(() => {});
@@ -827,9 +821,12 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
   }, [sessionToken]);
 
   const cleanupPeer = (remoteUserId: string) => {
-    peerConnectionsRef.current.get(remoteUserId)?.close();
+    const connection = peerConnectionsRef.current.get(remoteUserId);
     peerConnectionsRef.current.delete(remoteUserId);
-    pendingCandidatesRef.current.delete(remoteUserId);
+    signalingRef.current.get(remoteUserId)?.dispose(); signalingRef.current.delete(remoteUserId);
+    peerSessionsRef.current.delete(remoteUserId);
+    window.clearTimeout(restartTimersRef.current.get(remoteUserId)); restartTimersRef.current.delete(remoteUserId);
+    connection?.close();
     setRemoteStreams((current) => {
       if (!current[remoteUserId]) return current;
       const next = { ...current };
@@ -838,16 +835,12 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
     });
   };
 
-  const sendPeerSignal = (toUserId: Id<"users">, kind: "offer" | "answer" | "candidate", payload: string) => {
-    void localApi("/api/local-voice/signals", sessionToken, { method: "POST", json: { toUserId, kind, payload } }).catch((error) => {
-      setNotice(error instanceof Error ? error.message : "Could not send call signal");
-    });
-  };
-
-  const flushPendingCandidates = async (remoteUserId: string, connection: RTCPeerConnection) => {
-    const pending = pendingCandidatesRef.current.get(remoteUserId) ?? [];
-    pendingCandidatesRef.current.delete(remoteUserId);
-    for (const candidate of pending) await connection.addIceCandidate(candidate);
+  const sendPeerSignal = async (toUserId: Id<"users">, kind: "offer" | "answer" | "candidate", payload: string, fromJoinedAt: number, toJoinedAt?: number) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!joinedRef.current || ownSessionRef.current !== fromJoinedAt || peerSessionsRef.current.get(toUserId) !== toJoinedAt) return;
+      try { await localApi("/api/local-voice/signals", sessionToken, { method: "POST", json: { toUserId, kind, payload, fromJoinedAt, toJoinedAt } }); return; }
+      catch (error) { if (attempt === 2) throw error; await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1))); }
+    }
   };
 
   const ensurePeerConnection = (remoteUserId: Id<"users">) => {
@@ -856,6 +849,12 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
     if (existing) return existing;
 
     const connection = new RTCPeerConnection({ iceServers: iceServersRef.current });
+    const fromSession = ownSessionRef.current, toSession = peerSessionsRef.current.get(key);
+    const send = (kind: "offer" | "answer" | "candidate", payload: string) => sendPeerSignal(remoteUserId, kind, payload, fromSession, toSession);
+    const signaling = createCallSignaling(connection, user._id.toString() < key, send);
+    signalingRef.current.set(key, signaling);
+    const signalError = (error: unknown) => { if (joinedRef.current && peerConnectionsRef.current.get(key) === connection) setNotice(error instanceof Error ? error.message : "Could not connect call"); };
+    connection.onnegotiationneeded = () => { void signaling.offer().catch(signalError); };
     const stream = localStreamRef.current;
     const audioTrack = stream?.getAudioTracks()[0];
     const videoTrack = stream?.getVideoTracks()[0];
@@ -866,20 +865,37 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
     // Reserve a separate video transceiver so screen sharing never replaces the camera.
     connection.addTransceiver(screenRef.current?.getVideoTracks()[0] || "video", { direction: "sendrecv", streams: [screenRef.current || new MediaStream()] });
     connection.onicecandidate = (event) => {
-      if (event.candidate) sendPeerSignal(remoteUserId, "candidate", JSON.stringify(event.candidate.toJSON()));
+      if (event.candidate) void send("candidate", JSON.stringify(event.candidate.toJSON())).catch(signalError);
     };
     connection.ontrack = (event) => {
+      if (peerConnectionsRef.current.get(key) !== connection) return;
       const screenTrack = connection.getTransceivers().filter(item => item.receiver.track.kind === "video")[1]?.receiver.track === event.track;
       setRemoteStreams(current => {
-        const stream = current[key]?.stream || new MediaStream();
-        const screen = current[key]?.screen || new MediaStream();
+        const stream = new MediaStream(current[key]?.stream.getTracks().filter(track => track.readyState === "live") || []);
+        const screen = new MediaStream(current[key]?.screen?.getTracks().filter(track => track.readyState === "live") || []);
         const target = screenTrack ? screen : stream;
         if (!target.getTracks().includes(event.track)) target.addTrack(event.track);
         return { ...current, [key]: { stream, screen, addedAt: current[key]?.addedAt ?? Date.now() } };
       });
     };
+    let restartAttempts = 0;
     connection.onconnectionstatechange = () => {
-      if (["closed", "failed"].includes(connection.connectionState)) cleanupPeer(key);
+      if (peerConnectionsRef.current.get(key) !== connection || !joinedRef.current) return;
+      if (connection.connectionState === "connected") {
+        restartAttempts = 0; window.clearTimeout(restartTimersRef.current.get(key)); restartTimersRef.current.delete(key);
+      } else if (["disconnected", "failed"].includes(connection.connectionState) && !restartTimersRef.current.has(key)) {
+        const timer = window.setTimeout(() => {
+          restartTimersRef.current.delete(key);
+          if (!joinedRef.current || peerConnectionsRef.current.get(key) !== connection) return;
+          if (++restartAttempts > 3) { setNotice("Connection interrupted. Leave and rejoin to reconnect."); return; }
+          void localApi<{ iceServers: RTCIceServer[] }>("/api/local-voice/config", sessionToken).then(config => {
+            if (peerConnectionsRef.current.get(key) !== connection || !joinedRef.current) return;
+            iceServersRef.current = config.iceServers; connection.setConfiguration({ iceServers: config.iceServers });
+            return signaling.offer(true);
+          }).catch(signalError);
+        }, connection.connectionState === "failed" ? 500 : 4000);
+        restartTimersRef.current.set(key, timer);
+      } else if (connection.connectionState === "closed") cleanupPeer(key);
     };
     peerConnectionsRef.current.set(key, connection);
     return connection;
@@ -905,7 +921,7 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
       const hasAudio = stream.getAudioTracks().length > 0;
       const hasVideo = stream.getVideoTracks().length > 0;
       if (!mountedRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
-      await localApi("/api/local-voice/participants", sessionToken, {
+      const presence = await localApi<{ joinedAt: number }>("/api/local-voice/participants", sessionToken, {
         method: "POST",
         json: { action: "join", audioEnabled: hasAudio, videoEnabled: hasVideo },
       });
@@ -915,6 +931,7 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
         return;
       }
       joinedRef.current = true;
+      ownSessionRef.current = presence.joinedAt;
       localStreamRef.current = stream;
       setLocalStream(stream);
       setDevicesOpen(false);
@@ -937,7 +954,8 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
     setRemoteStreams({});
     peerConnectionsRef.current.forEach((connection) => connection.close());
     peerConnectionsRef.current.clear();
-    pendingCandidatesRef.current.clear();
+    signalingRef.current.forEach(signaling => signaling.dispose()); signalingRef.current.clear(); peerSessionsRef.current.clear();
+    restartTimersRef.current.forEach(timer => window.clearTimeout(timer)); restartTimersRef.current.clear();
     processedSignalsRef.current.clear();
     await localApi("/api/local-voice/participants", sessionToken, { method: "POST", json: { action: "leave" } }).catch(() => {});
   };
@@ -1052,18 +1070,11 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
       if (!activeRemoteIds.has(remoteUserId)) cleanupPeer(remoteUserId);
     });
     for (const participant of remoteParticipants) {
-      const connection = ensurePeerConnection(participant.userId);
-      const shouldOffer = user._id.toString() > participant.userId.toString();
-      if (!shouldOffer || connection.localDescription || connection.remoteDescription || connection.signalingState !== "stable") continue;
-      void connection
-        .createOffer()
-        .then((offer) => connection.setLocalDescription(offer))
-        .then(() => {
-          if (connection.localDescription) {
-            sendPeerSignal(participant.userId, "offer", JSON.stringify(connection.localDescription));
-          }
-        })
-        .catch((error) => setNotice(error instanceof Error ? error.message : "Could not start peer call"));
+      const previousSession = peerSessionsRef.current.get(participant.userId);
+      if (previousSession !== undefined && previousSession > participant.joinedAt) continue;
+      if (previousSession !== undefined && previousSession !== participant.joinedAt) cleanupPeer(participant.userId);
+      peerSessionsRef.current.set(participant.userId, participant.joinedAt);
+      ensurePeerConnection(participant.userId);
     }
   }, [localStream, participants, user._id]);
 
@@ -1072,37 +1083,21 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
     const handleSignals = async () => {
       const ackIds: string[] = [];
       for (const signal of signals) {
+        if (!joinedRef.current) break;
         const key = signal.id;
         if (processedSignalsRef.current.has(key)) continue;
         processedSignalsRef.current.add(key);
         ackIds.push(signal.id);
-        const remoteUserId = signal.fromUserId.toString();
-        const connection = ensurePeerConnection(signal.fromUserId);
+        if (signal.toJoinedAt !== undefined && signal.toJoinedAt !== ownSessionRef.current) continue;
+        const previousSession = peerSessionsRef.current.get(signal.fromUserId);
+        if (signal.fromJoinedAt !== undefined) {
+          if (previousSession !== undefined && previousSession > signal.fromJoinedAt) continue;
+          if (previousSession !== undefined && previousSession !== signal.fromJoinedAt) cleanupPeer(signal.fromUserId);
+          peerSessionsRef.current.set(signal.fromUserId, signal.fromJoinedAt);
+        }
+        ensurePeerConnection(signal.fromUserId);
         try {
-          if (signal.kind === "offer") {
-            await connection.setRemoteDescription(JSON.parse(signal.payload) as RTCSessionDescriptionInit);
-            await flushPendingCandidates(remoteUserId, connection);
-            const answer = await connection.createAnswer();
-            await connection.setLocalDescription(answer);
-            if (connection.localDescription) {
-              sendPeerSignal(signal.fromUserId, "answer", JSON.stringify(connection.localDescription));
-            }
-          } else if (signal.kind === "answer") {
-            if (connection.signalingState === "have-local-offer") {
-              await connection.setRemoteDescription(JSON.parse(signal.payload) as RTCSessionDescriptionInit);
-              await flushPendingCandidates(remoteUserId, connection);
-            }
-          } else {
-            const candidate = JSON.parse(signal.payload) as RTCIceCandidateInit;
-            if (connection.remoteDescription) {
-              await connection.addIceCandidate(candidate);
-            } else {
-              pendingCandidatesRef.current.set(remoteUserId, [
-                ...(pendingCandidatesRef.current.get(remoteUserId) ?? []),
-                candidate,
-              ]);
-            }
-          }
+          await signalingRef.current.get(signal.fromUserId)?.receive(signal.kind, signal.payload);
         } catch (error) {
           setNotice(error instanceof Error ? error.message : "Call connection failed");
         }
@@ -1207,7 +1202,8 @@ function CallVideoTile({
   return (
     <div ref={tileRef} className={clsx("call-tile", !videoEnabled && "video-off", screenSharing && "screen-share-tile", focused && "focused-call-tile")}>
       <button className="call-tile-focus" aria-label={`${focused ? "Reduce" : "Enlarge"} ${label || participant.name}`} aria-pressed={focused} onClick={onFocus} />
-      <video ref={videoRef} autoPlay muted={muted} playsInline style={!videoEnabled ? { position: "absolute", width: 1, height: 1, opacity: 0 } : undefined} />{!videoEnabled && <div className="video-avatar"><UserAvatar user={participant} /></div>}
+      <video ref={videoRef} autoPlay muted playsInline style={!videoEnabled ? { position: "absolute", width: 1, height: 1, opacity: 0 } : undefined} />{!videoEnabled && <div className="video-avatar"><UserAvatar user={participant} /></div>}
+      {!muted && <CallAudio stream={stream} name={participant.name} />}
       <div className="call-tile-meta">
         <button className="call-member-profile" onClick={() => openMember(participant.email)} aria-label={`View ${participant.name} profile`}>{label ?? displayUsername(participant)}</button>
         {audioEnabled ? <Mic size={13} /> : <MicOff size={13} />}
@@ -1220,9 +1216,10 @@ function CallVideoTile({
 
 function ProjectWorkspace({ projectId, sessionToken, user }: { projectId: Id<"projects">; sessionToken: string; user: AuthUser }) {
   const [tab, setTab] = useState<TabKey>("board");
-  useEffect(() => { if (new URLSearchParams(window.location.search).get("tab") === "repo") setTab("repo"); }, [projectId]);
+  useEffect(() => { const value = new URLSearchParams(window.location.search).get("tab"); if (tabs.some(tab => tab.key === value)) setTab(value as TabKey); }, [projectId]);
   const tabLoading = useContentTransition(`${projectId}:${tab}`);
   const [issueOpen, setIssueOpen] = useState(false);
+  const [feedbackTask, setFeedbackTask] = useState<Id<"tasks"> | null>(null);
   const project = useQuery(api.projects.get, { projectId, sessionToken });
   if (!project) return <LoadingState label="Opening project" />;
   return (
@@ -1234,7 +1231,9 @@ function ProjectWorkspace({ projectId, sessionToken, user }: { projectId: Id<"pr
       {tab === "assets" ? <AssetsPanel projectId={projectId} sessionToken={sessionToken} /> : null}
       {tab === "vault" ? <VaultPanel projectId={projectId} sessionToken={sessionToken} /> : null}
       {tab === "team" ? <section className="project-team-section"><WorkspaceMembers sessionToken={sessionToken} /></section> : null}
+      {tab === "feedback" ? <FeedbackView key={projectId} projectId={projectId} sessionToken={sessionToken} onOpenTask={(_, taskId) => setFeedbackTask(taskId)} /> : null}
       {tab === "settings" ? <SettingsTab project={project} sessionToken={sessionToken} /> : null}
+      {feedbackTask && <TaskModal project={project} projectId={projectId} sessionToken={sessionToken} taskId={feedbackTask} canEdit={project.memberRole !== "viewer"} onClose={() => setFeedbackTask(null)} />}
       {issueOpen && <IssueComposer sessionToken={sessionToken} activeProjectId={projectId} projects={[project]} onClose={() => setIssueOpen(false)} onCreated={() => setTab("board")} />}
     </div>
   );
@@ -1404,7 +1403,7 @@ function BoardTab({ project, projectId, sessionToken, canEdit, userEmail, onCrea
                     onKeyDown={event => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setSelectedTaskId(task._id); } }}
                   >
                     <div className="task-card-head">
-                      <span className="task-code">{taskKey(task._id)}</span>
+                      <span className="task-code">{taskKey(task._id)}<GitHubIssueIndicator number={task.githubIssueNumber} /></span>
                       <button className="drag-handle" type="button" disabled={!canEdit} aria-label="Drag task">
                         <GripVertical size={14} />
                       </button>
@@ -1475,6 +1474,7 @@ function TaskModal({
   onClose: () => void;
 }) {
   const details = useQuery(api.tasks.details, { projectId, sessionToken, taskId });
+  const workspace = useWorkspace();
   const updateTask = useMutation(api.tasks.updateTask);
   const moveTask = useMutation(api.tasks.moveTask);
   const addComment = useMutation(api.tasks.addComment);
@@ -1623,12 +1623,13 @@ function TaskModal({
       </aside>
       <section className="issue-detail-activity">
         <header><h3><MessageCircle size={15} />Activity <span>{activity.length}</span></h3></header>
+        <IssueFileUpload projectId={projectId} taskId={taskId} sessionToken={sessionToken} disabled={!canEdit} onLink={url => { setAssetUrl(url); setAssetName(new URL(url).hostname); setAssetType("link"); setAttachmentOpen(true); }}>
         <div className="issue-timeline">
           {!activity.length && <p className="activity-empty">No activity yet.</p>}
           {activity.map(entry => <article className="issue-timeline-entry" key={entry.item._id}>
             <span className="activity-avatar" aria-hidden="true">{entry.kind === "comment" ? initials(entry.item.authorName) : <Paperclip size={14} />}</span>
             <div className="activity-entry-content"><header><strong>{entry.kind === "comment" ? entry.item.authorName : "Attachment"}</strong><time dateTime={new Date(entry.at).toISOString()} title={new Date(entry.at).toLocaleString()}>{new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(entry.at)}</time></header>
-              {entry.kind === "comment" ? <p>{entry.item.body}</p> : <a className="activity-attachment" href={entry.item.url} target="_blank" rel="noreferrer"><span>{entry.item.name}</span><ExternalLink size={13} /></a>}
+              {entry.kind === "comment" ? <p>{entry.item.body}</p> : entry.item.localFileId ? <LocalAttachment file={{ id: entry.item.localFileId, name: entry.item.name, size: entry.item.size || 0, contentType: entry.item.contentType || "application/octet-stream" }} sessionToken={sessionToken} scope={`teamId=${workspace._id}`} /> : <a className="activity-attachment" href={entry.item.url} target="_blank" rel="noreferrer"><span>{entry.item.name}</span><ExternalLink size={13} /></a>}
             </div>
           </article>)}
         </div>
@@ -1643,6 +1644,7 @@ function TaskModal({
           <button className="ghost-button compact" type="submit" disabled={activityBusy}><Paperclip size={14} />Attach</button>
         </form>}
         {activityError && <div className="notice danger" role="alert">{activityError}</div>}
+        </IssueFileUpload>
       </section>
     </div> : <div className="dialog-body"><LoadingState label="Opening issue" /></div>}
   </Dialog>;
@@ -1668,7 +1670,7 @@ function RepoTab({ project, sessionToken }: { project: Doc<"projects"> & { membe
           {github.loading ? <LoadingState label="GitHub issues" /> : null}
           {github.error ? <div className="notice danger">{github.error}</div> : null}
           {github.snapshot?.commitsError && <div className="notice">{github.snapshot.commitsError}</div>}
-          {project.repoUrl && !project.githubWorkspaceAccess && ["owner", "admin"].includes(project.memberRole) && <button className="ghost-button compact" onClick={async () => { try { await approveRepository({ sessionToken, projectId: project._id }); setRevision(value => value + 1); } catch { setRepoNotice("Could not authorize repository access"); } }}><GitBranch size={14} />Use workspace GitHub connection</button>}
+          {project.repoUrl && !project.githubWorkspaceAccess && ["owner", "admin"].includes(project.memberRole) && <button className="ghost-button compact" onClick={async () => { try { await approveRepository({ sessionToken, projectId: project._id, repoUrl: project.repoUrl! }); setRevision(value => value + 1); } catch { setRepoNotice("A workspace admin must authorize this repository"); } }}><GitBranch size={14} />Use workspace GitHub connection</button>}
           <GitHubConnection projectId={project._id} repoUrl={project.repoUrl} sessionToken={sessionToken} canManage={["owner", "admin"].includes(project.memberRole)} onChange={() => setRevision(value => value + 1)} />
         </div>
         <div className="panel commit-panel">

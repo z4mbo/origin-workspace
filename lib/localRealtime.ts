@@ -21,7 +21,7 @@ export type LocalVoiceParticipant = {
   userId: Id<"users">; name: string; username?: string; email: string; avatarUrl?: string | null;
   audioEnabled: boolean; videoEnabled: boolean; screenSharing?: boolean; joinedAt: number; lastSeenAt: number;
 };
-export type LocalVoiceSignal = { id: string; fromUserId: Id<"users">; toUserId: Id<"users">; kind: "offer" | "answer" | "candidate"; payload: string; createdAt: number };
+export type LocalVoiceSignal = { id: string; fromUserId: Id<"users">; toUserId: Id<"users">; fromJoinedAt?: number; toJoinedAt?: number; kind: "offer" | "answer" | "candidate"; payload: string; createdAt: number };
 
 let convexClient: ConvexHttpClient | null = null;
 let database: DatabaseSync | null = null;
@@ -192,24 +192,28 @@ function pruneVoice() { db().prepare("DELETE FROM participants WHERE seen<?").ru
 export async function listLocalVoiceParticipants(user: LocalWorkspaceUser) {
   pruneVoice(); return (db().prepare("SELECT payload FROM participants WHERE team=? ORDER BY seen").all(user.teamId) as { payload: string }[]).map(row => JSON.parse(row.payload) as LocalVoiceParticipant);
 }
-export async function joinLocalVoice(user: LocalWorkspaceUser, audioEnabled: boolean, videoEnabled: boolean, screenSharing = false) {
+export async function joinLocalVoice(user: LocalWorkspaceUser, audioEnabled: boolean, videoEnabled: boolean, screenSharing = false, heartbeat = false) {
   requireWriter(user); pruneVoice();
   const active = await listLocalVoiceParticipants(user);
   if (active.length >= 8 && !active.some(p => p.userId === user._id)) throw new Error("This room is full (8 people)");
-  const participant: LocalVoiceParticipant = { userId: user._id, name: user.name, username: user.username, email: user.email, avatarUrl: user.avatarUrl, audioEnabled, videoEnabled, screenSharing, joinedAt: active.find(p => p.userId === user._id)?.joinedAt || Date.now(), lastSeenAt: Date.now() };
-  db().prepare("INSERT INTO participants VALUES(?,?,?,?) ON CONFLICT(team,user) DO UPDATE SET seen=excluded.seen,payload=excluded.payload").run(user.teamId, user._id, Date.now(), JSON.stringify(participant)); return user._id;
+  const previous = active.find(p => p.userId === user._id);
+  if (!heartbeat) db().prepare("DELETE FROM signals WHERE team=? AND (sender=? OR recipient=?)").run(user.teamId, user._id, user._id);
+  const participant: LocalVoiceParticipant = { userId: user._id, name: user.name, username: user.username, email: user.email, avatarUrl: user.avatarUrl, audioEnabled, videoEnabled, screenSharing, joinedAt: heartbeat && previous ? previous.joinedAt : Math.max(Date.now(), (previous?.joinedAt || 0) + 1), lastSeenAt: Date.now() };
+  db().prepare("INSERT INTO participants VALUES(?,?,?,?) ON CONFLICT(team,user) DO UPDATE SET seen=excluded.seen,payload=excluded.payload").run(user.teamId, user._id, Date.now(), JSON.stringify(participant)); return participant;
 }
-export async function updateLocalVoicePresence(user: LocalWorkspaceUser, audioEnabled: boolean, videoEnabled: boolean, screenSharing = false) { return joinLocalVoice(user, audioEnabled, videoEnabled, screenSharing); }
+export async function updateLocalVoicePresence(user: LocalWorkspaceUser, audioEnabled: boolean, videoEnabled: boolean, screenSharing = false) { return joinLocalVoice(user, audioEnabled, videoEnabled, screenSharing, true); }
 export async function leaveLocalVoice(user: LocalWorkspaceUser) {
   db().prepare("DELETE FROM participants WHERE team=? AND user=?").run(user.teamId, user._id);
   db().prepare("DELETE FROM signals WHERE team=? AND (sender=? OR recipient=?)").run(user.teamId, user._id, user._id);
 }
-export async function sendLocalVoiceSignal(user: LocalWorkspaceUser, toUserId: Id<"users">, kind: LocalVoiceSignal["kind"], payload: string) {
+export async function sendLocalVoiceSignal(user: LocalWorkspaceUser, toUserId: Id<"users">, kind: LocalVoiceSignal["kind"], payload: string, fromJoinedAt?: number, toJoinedAt?: number) {
   requireWriter(user);
   if (toUserId === user._id || !["offer", "answer", "candidate"].includes(kind) || typeof payload !== "string" || !payload || payload.length > 80000) throw new Error("Invalid call signal");
   const active = await listLocalVoiceParticipants(user);
-  if (!active.some(p => p.userId === user._id) || !active.some(p => p.userId === toUserId)) throw new Error("Both participants must be in this workspace call");
-  const signal: LocalVoiceSignal = { id: crypto.randomUUID(), fromUserId: user._id, toUserId, kind, payload, createdAt: Date.now() };
+  const sender = active.find(p => p.userId === user._id), recipient = active.find(p => p.userId === toUserId);
+  if (!sender || !recipient) throw new Error("Both participants must be in this workspace call");
+  if ((fromJoinedAt !== undefined && fromJoinedAt !== sender.joinedAt) || (toJoinedAt !== undefined && toJoinedAt !== recipient.joinedAt)) return null;
+  const signal: LocalVoiceSignal = { id: crypto.randomUUID(), fromUserId: user._id, toUserId, fromJoinedAt: sender.joinedAt, toJoinedAt: recipient.joinedAt, kind, payload, createdAt: Date.now() };
   db().prepare("INSERT INTO signals VALUES(?,?,?,?,?,?)").run(signal.id, user.teamId, toUserId, user._id, signal.createdAt, JSON.stringify(signal)); return signal;
 }
 export async function listLocalVoiceSignals(user: LocalWorkspaceUser) {

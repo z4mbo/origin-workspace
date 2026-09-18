@@ -92,11 +92,13 @@ async function link(projectId: string, taskId: string, repoUrl: string, issue: G
 }
 
 export async function createGitHubTask(projectId: string, taskId: string) {
-  const { task, repo, token } = await contextWithToken(projectId, taskId);
+  const { task, repo, token, connection, project } = await contextWithToken(projectId, taskId);
   if (!task || !repo) throw new Error("Connect a GitHub repository first");
-  if (!token) throw new Error("A workspace admin needs to connect GitHub in Settings > Integrations");
   const repoUrl = `https://github.com/${repo.owner}/${repo.repo}`;
   if (task.githubIssueNumber) return { ok: true, issueNumber: task.githubIssueNumber, issueUrl: task.githubIssueUrl, message: `Already linked to GitHub #${task.githubIssueNumber}` };
+  if (!token) throw new Error(connection && !project.githubWorkspaceAccess
+    ? "GitHub is connected. A workspace admin must enable this repository in the project's Repo tab."
+    : "A workspace admin needs to reconnect GitHub in Settings > Integrations");
   const key = `issue:${taskId}:${repoUrl.toLowerCase()}`;
   if (!lockGitHubJob(key)) throw new Error("This issue is already being created. Wait a moment before retrying.");
   try {
@@ -129,7 +131,7 @@ export async function createGitHubTask(projectId: string, taskId: string) {
 
 export async function syncTarget(target: Target) {
   const { token, repo } = await contextWithToken(target.projectId, target.taskId);
-  if (!repo || !token) return;
+  if (!repo || !token) throw new Error("Repository sync needs an authorized GitHub connection");
   const issue = await githubRequest<GitHubIssue>(`/repos/${repo.owner}/${repo.repo}/issues/${target.number}`, token);
   if (!issue.pull_request) await link(target.projectId, target.taskId, `https://github.com/${repo.owner}/${repo.repo}`, issue);
 }

@@ -39,11 +39,12 @@ export const configure = mutation({
 });
 
 export const approveRepository = mutation({
-  args: { sessionToken: v.string(), projectId: v.id("projects") }, returns: v.null(),
+  args: { sessionToken: v.string(), projectId: v.id("projects"), repoUrl: v.optional(v.string()) }, returns: v.null(),
   handler: async (ctx, a) => {
     const project = await ctx.db.get(a.projectId);
     if (!project?.teamId || !project.repoUrl) throw new Error("Repository required");
     await requireTeamAdmin(ctx, project.teamId, a.sessionToken);
+    if (a.repoUrl !== undefined && project.repoUrl !== a.repoUrl) throw new Error("Repository changed. Reload the project and try again.");
     await ctx.db.patch(project._id, { githubWorkspaceAccess: true }); return null;
   },
 });
@@ -87,13 +88,14 @@ export const linkIssue = internalMutation({
     if (task.githubIssueUrl && normalized(task.githubIssueUrl.split("/issues/")[0]) !== normalized(a.repoUrl)) throw new Error("Issue belongs to the previous repository");
     if (task.githubIssueNumber && task.githubIssueNumber !== a.number) throw new Error("Issue already linked");
     if (a.issueUrl !== `${a.repoUrl}/issues/${a.number}`) throw new Error("Invalid issue URL");
-    if ((task.githubIssueSyncedAt || 0) > a.updatedAt) return null;
-    if (task.githubIssueNumber === a.number && task.githubIssueState === a.state && task.githubIssueSyncedAt === a.updatedAt && task.githubIssueUrl === a.issueUrl && task.teamId === project.teamId) return null;
+    if ((task.githubIssueUpdatedAt || 0) > a.updatedAt) return null;
     const done = a.state === "closed";
-    // Only a remote state transition changes Origin's completion state.
-    const changed = task.githubIssueState ? task.githubIssueState !== a.state : a.state === "closed";
+    // Closed GitHub issues are authoritative; an unchanged open issue must not
+    // undo work completed locally before GitHub is closed.
+    const changed = done ? !task.done : task.githubIssueState === "closed";
+    if (!changed && task.githubIssueNumber === a.number && task.githubIssueState === a.state && task.githubIssueUpdatedAt === a.updatedAt && task.githubIssueUrl === a.issueUrl && task.teamId === project.teamId) return null;
     if (changed) { await recordCompletion(ctx, task, done, a.updatedAt); if (task.done !== done) await changeOpenIssueCount(ctx, project._id, done ? -1 : 1); }
-    await ctx.db.patch(task._id, { teamId: project.teamId, githubIssueNumber: a.number, githubIssueUrl: a.issueUrl, githubIssueState: a.state, githubIssueSyncedAt: a.updatedAt, ...(changed ? { done, updatedAt: Date.now() } : {}) });
+    await ctx.db.patch(task._id, { teamId: project.teamId, githubIssueNumber: a.number, githubIssueUrl: a.issueUrl, githubIssueState: a.state, githubIssueUpdatedAt: a.updatedAt, githubIssueSyncedAt: Date.now(), ...(changed ? { done, updatedAt: Date.now() } : {}) });
     if (changed || !task.githubIssueNumber) await touchProject(ctx, project._id); return null;
   },
 });

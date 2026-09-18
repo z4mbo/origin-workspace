@@ -9,6 +9,7 @@ import { validDay } from "./lib/features";
 const row = v.object({
   _id: v.id("tasks"), projectId: v.id("projects"), title: v.string(), priority: priorityValidator,
   done: v.boolean(), dueDate: v.optional(v.string()), assignedToName: v.optional(v.string()),
+  githubIssueNumber: v.optional(v.number()),
   assignedToEmail: v.optional(v.string()), projectName: v.string(), accent: v.string(),
   iconType: v.optional(projectIconTypeValidator), iconValue: v.optional(v.string()), iconUrl: v.union(v.string(), v.null()),
 });
@@ -45,7 +46,7 @@ export const list = query({
     return { isDone: result.isDone, continueCursor: result.continueCursor, page: result.page.flatMap(t => {
       const p = projects.get(t.projectId);
       return p ? [{ _id: t._id, projectId: t.projectId, title: t.title, priority: t.priority, done: t.done, dueDate: t.dueDate,
-        assignedToName: t.assignedToName, assignedToEmail: t.assignedToEmail, projectName: p.name, accent: p.accent,
+        assignedToName: t.assignedToName, assignedToEmail: t.assignedToEmail, githubIssueNumber: t.githubIssueNumber, projectName: p.name, accent: p.accent,
         iconType: p.iconType, iconValue: p.iconValue, iconUrl: p.iconUrl }] : [];
     }) };
   },

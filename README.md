@@ -2,7 +2,7 @@
 
 **A shared workspace for the things your team is building.**
 
-Projects, conversations, calls, drawings, documents, and releases. Connected to GitHub, without making GitHub your project manager.
+Projects, conversations, calls, and drawings. Connected to GitHub, without making GitHub your project manager.
 
 [Try Origin](https://origin.imbored.fun) · [Self-host](deploy/README.md) · [Connect Claude or Codex](docs/claude-origin.md) · [Contribute](CONTRIBUTING.md)
 
@@ -13,14 +13,11 @@ Projects, conversations, calls, drawings, documents, and releases. Connected to 
 | Section | What you can do |
 | --- | --- |
 | Inbox | Assigned issues, filters, a week/month calendar, comments, mentions, snoozing, and completion activity. |
-| Projects | Editable workflows, labels, sub-issues and dependencies, issue templates, due dates, assets, and an encrypted vault. |
+| Projects | Editable workflows, labels, sub-issues and dependencies, due dates, image/file attachments, assets, and an encrypted vault. |
 | Chat | Workspace chat and DMs, full-history text search, attachments, mentions, reactions, pins, and message-to-issue creation. |
 | Call | Audio, video, screen sharing, participant focus, and a self-hosted TURN relay. |
 | Draw | A shared Excalidraw canvas with real-time editing and cursors. |
-| Docs | Collaborative project documents, processes, and decisions. Turn selected text into an issue. |
-| Roadmap | Cross-project milestones, target dates, linked issues, and completion progress. |
-| Feedback | An opt-in public submission form. Triage privately and convert feedback into assigned issues. |
-| Releases | Group completed issues into versioned releases and generate a workspace changelog. |
+| Project feedback | A dedicated tab in each project, with an opt-in public submission form. Triage privately and convert feedback into assigned issues. |
 
 Completed issues stay accessible in each project's completed view. They do not occupy a kanban column or inflate the sidebar's open-issue count.
 
@@ -40,7 +37,7 @@ Each workspace is private to its members. Publishing the source code does **not*
 
 Connect the workspace administrator's GitHub account, then create private repositories from Origin. Existing repositories can be linked and approved individually.
 
-Create an Origin issue, select **Create GitHub issue**, and implement it in the linked repository with your preferred tools. Closing the GitHub issue completes its Origin counterpart. Opening a pull request alone does not complete an issue.
+Create an Origin issue, select **Create GitHub issue**, and implement it in the linked repository with your preferred tools. A small branch icon marks linked issues. Closing the GitHub issue completes its Origin counterpart. Opening a pull request alone does not complete an issue.
 
 Origin also exposes an OAuth-protected MCP endpoint at `/api/mcp`. AI clients can read projects and issues, and optionally create or modify them in a workspace you authorize. Access is revocable and expires. The connector does not expose chat, the vault, GitHub credentials, or arbitrary code execution. See the [MCP guide](docs/claude-origin.md).
 
@@ -64,7 +61,7 @@ npm run dev
 
 Open `http://localhost:3000/signup` and create your first workspace. There are no seeded accounts, default passwords, or bundled user data.
 
-The board, documents, drawings, and account data use Convex. Chat, DMs, uploads, call signaling, and integration credentials use the Node server's local data directory. GitHub/MCP features need the shared integration secret described in the [deployment guide](deploy/README.md). Camera and screen capture require HTTPS outside localhost.
+The board, drawings, feedback, and account data use Convex. Chat, DMs, issue attachments, call signaling, and integration credentials use the Node server's local data directory. Project assets use Convex storage. GitHub/MCP features need the shared integration secret described in the [deployment guide](deploy/README.md). Camera and screen capture require HTTPS outside localhost.
 
 ## Architecture
 
@@ -88,6 +85,8 @@ npm run build
 npx tsx scripts/test-document-sync.ts
 npx tsx scripts/test-chat-composer.ts
 npx tsx scripts/test-github-sync.ts
+npx tsx scripts/test-call-signaling.ts
+npx tsx scripts/test-dropped-content.ts
 ```
 
 Integration tests create synthetic users and records and refuse non-localhost backends. See [testing](docs/testing.md). Never point development or test commands at a live workspace deployment.

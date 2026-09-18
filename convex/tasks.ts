@@ -416,24 +416,40 @@ export const addAsset = mutation({
     taskId: v.id("tasks"),
     type: taskAssetTypeValidator,
     name: v.string(),
-    url: v.string(),
+    url: v.optional(v.string()),
+    localFileId: v.optional(v.string()),
+    contentType: v.optional(v.string()),
+    size: v.optional(v.number()),
     notes: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const { user } = await requireEditor(ctx, args.projectId, args.sessionToken);
     const task = await ctx.db.get(args.taskId);
     if (!task || task.projectId !== args.projectId) throw new Error("Task not found");
+    if (!args.name.trim() || args.name.length > 200) throw new Error("Enter an attachment name under 200 characters");
+    if (args.localFileId) {
+      if (!/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(args.localFileId) || args.size === undefined || !Number.isInteger(args.size) || args.size <= 0 || args.size > 15 * 1024 * 1024) throw new Error("Invalid attachment");
+    } else {
+      let link: URL;
+      try { link = new URL(args.url?.trim() || ""); } catch { throw new Error("Use an http or https link"); }
+      if (!["http:", "https:"].includes(link.protocol) || link.username || link.password) throw new Error("Use an http or https link without credentials");
+    }
     await ctx.db.insert("taskAssets", {
       projectId: args.projectId,
       taskId: args.taskId,
       type: args.type,
       name: args.name.trim(),
-      url: args.url.trim(),
+      url: args.localFileId ? "" : args.url!.trim(),
+      localFileId: args.localFileId,
+      contentType: args.contentType?.slice(0, 150),
+      size: args.size,
       notes: args.notes?.trim() || undefined,
       authorUserId: user._id,
       createdAt: Date.now(),
     });
     await touchProject(ctx, args.projectId);
+    return null;
   },
 });
 

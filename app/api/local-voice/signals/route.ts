@@ -33,10 +33,12 @@ export async function POST(request: Request) {
       toUserId?: Id<"users">;
       kind?: LocalVoiceSignal["kind"];
       payload?: string;
+      fromJoinedAt?: number;
+      toJoinedAt?: number;
     };
     const user = await requireLocalWorkspace(request, body);
     if (!body.toUserId || !body.kind) throw new Error("Signal target and kind required");
-    const signal = await sendLocalVoiceSignal(user, body.toUserId, body.kind, body.payload || "");
+    const signal = await sendLocalVoiceSignal(user, body.toUserId, body.kind, body.payload || "", body.fromJoinedAt, body.toJoinedAt);
     return NextResponse.json({ signal, hosted: "origin-local" });
   } catch (error) {
     return errorResponse(error);

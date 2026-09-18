@@ -7,6 +7,8 @@ npx tsc --noEmit
 npx tsx scripts/test-document-sync.ts
 npx tsx scripts/test-chat-composer.ts
 npx tsx scripts/test-github-sync.ts
+npx tsx scripts/test-call-signaling.ts
+npx tsx scripts/test-dropped-content.ts
 npm run build
 ```
 
@@ -16,4 +18,6 @@ Integration tests use a separate local Convex backend at `http://127.0.0.1:3210`
 
 Some integration suites read `/tmp/origin-integration-qa.env`. Supply the local Convex URLs, local Origin URL, test data directory, and a test-only `ORIGIN_INTEGRATION_SECRET` matching the isolated backend. Do not reuse a production secret. `scripts/test-features.mjs` covers collaborative documents, search, milestones, releases, public-feedback boundaries, and viewer/workspace authorization.
 
-Browser QA should include fresh signup, desktop/mobile layouts, two simultaneous document editors, chat mentions and attachments, a two-client call with screensharing, GitHub issue closure sync, and MCP authorization/revocation. A successful build is not a substitute for these checks.
+`scripts/test-github-lifecycle.mjs` covers real backend approval permissions, closure/reopen ordering, stale events, counters, and linked-issue badges. `scripts/test-project-fixes.mjs` also needs the isolated Origin server at port 3002; it covers local issue attachments, workspace isolation, viewer permissions, call-session renewal, and rejection of late signaling from previous sessions.
+
+Browser QA should include fresh signup, desktop/mobile layouts, project feedback, chat mentions and attachments, and image previews in issues. Test a two-client call with simultaneous joining, screen sharing, camera toggling, and a full page refresh followed by rejoining while the other client stays connected. Also check GitHub issue closure sync and MCP authorization/revocation. Use synthetic media for automated call checks, then test physical devices across separate networks before claiming broad network coverage. A successful build is not a substitute for these checks.
