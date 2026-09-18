@@ -46,3 +46,22 @@ export function activeChatTags(parts: ChatTextPart[]) {
     referenceIds: new Set(parts.flatMap(part => part.kind === "reference" ? [part.reference.id] : [])),
   };
 }
+
+export function chatMessageParts(body: string, mentions: ChatMention[] = [], references: ChatReference[] = []): ChatTextPart[] {
+  const parts = chatTextParts(body, mentions, references);
+  const active = activeChatTags(parts);
+  // Older messages stored selected tags separately, without inserting them into the body.
+  for (const mention of mentions) {
+    if (active.mentionIds.has(mention.userId)) continue;
+    if (parts.length) parts.push({ kind: "text", text: " " });
+    parts.push({ kind: "mention", text: `@${mention.name}`, mention });
+    active.mentionIds.add(mention.userId);
+  }
+  for (const reference of references) {
+    if (active.referenceIds.has(reference.id)) continue;
+    if (parts.length) parts.push({ kind: "text", text: " " });
+    parts.push({ kind: "reference", text: `#${reference.label}`, reference });
+    active.referenceIds.add(reference.id);
+  }
+  return parts;
+}
