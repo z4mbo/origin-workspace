@@ -115,6 +115,17 @@
 .github-issue-indicator { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 16px; width: 16px; height: 16px; color: #aeb4bd; vertical-align: middle; }
 .mobile-project-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 10px; }
 .project-feedback { padding: 16px 0; }
+.project-assets { flex: 1; min-height: 320px; }
+.asset-upload-form { padding: 20px; }
+.asset-upload-form .asset-drop { width: 100%; background: transparent; color: inherit; cursor: pointer; }
+.asset-upload-form .asset-drop:hover { background: #ffffff04; border-color: #7c858f; }
+.asset-upload-form .asset-drop:focus-visible { outline: 2px solid #8caa77; outline-offset: 2px; }
+.asset-upload-fields { display: grid; gap: 14px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.asset-upload-list { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.asset-upload-list li { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 0; }
+.asset-upload-list li > svg, .asset-upload-list .icon-button { flex-shrink: 0; }
+.asset-upload-list li > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.asset-upload-list small, .asset-upload-progress { color: #a5aab3; font-size: 12px; }
 .issue-file-drop { position: relative; min-width: 0; border-radius: 6px; transition: background .15s, outline-color .15s; }
 .drop-active { outline: 2px solid #8caa77; outline-offset: -2px; background: #8caa7710; }
 .issue-upload-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; min-height: 32px; margin: -4px 0 4px; color: #afb5bd; font-size: 12px; }
