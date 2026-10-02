@@ -12,6 +12,8 @@ export function createCallSignaling(connection: RTCPeerConnection, polite: boole
   };
   return {
     offer: (restart = false) => enqueue(async () => {
+      // A restart replaces an offer that never got an answer (for example, a lost signal).
+      if (restart && connection.signalingState === "have-local-offer") await connection.setLocalDescription({ type: "rollback" });
       if (connection.signalingState !== "stable") return;
       await connection.setLocalDescription(await connection.createOffer(restart ? { iceRestart: true } : undefined));
       if (!disposed && connection.localDescription) await send("offer", JSON.stringify(connection.localDescription));

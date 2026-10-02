@@ -938,24 +938,33 @@ function VoiceChatView({ sessionToken, user }: { sessionToken: string; user: Aut
       });
     };
     let restartAttempts = 0;
+    const scheduleRestart = (delay: number) => {
+      if (restartTimersRef.current.has(key)) return;
+      const timer = window.setTimeout(() => {
+        restartTimersRef.current.delete(key);
+        if (!joinedRef.current || peerConnectionsRef.current.get(key) !== connection || connection.connectionState === "connected") return;
+        if (++restartAttempts > 4) { setNotice("Connection interrupted. Leave and rejoin to reconnect."); return; }
+        void localApi<{ iceServers: RTCIceServer[] }>("/api/local-voice/config", sessionToken).then(config => {
+          if (peerConnectionsRef.current.get(key) !== connection || !joinedRef.current) return;
+          iceServersRef.current = config.iceServers; connection.setConfiguration({ iceServers: config.iceServers });
+          return signaling.offer(true);
+        }).catch(signalError);
+        // Keep checking: a restart whose offer or answer is lost would otherwise stay "connecting".
+        scheduleRestart(10_000);
+      }, delay);
+      restartTimersRef.current.set(key, timer);
+    };
     connection.onconnectionstatechange = () => {
       if (peerConnectionsRef.current.get(key) !== connection || !joinedRef.current) return;
       if (connection.connectionState === "connected") {
-        restartAttempts = 0; window.clearTimeout(restartTimersRef.current.get(key)); restartTimersRef.current.delete(key);
-      } else if (["disconnected", "failed"].includes(connection.connectionState) && !restartTimersRef.current.has(key)) {
-        const timer = window.setTimeout(() => {
-          restartTimersRef.current.delete(key);
-          if (!joinedRef.current || peerConnectionsRef.current.get(key) !== connection) return;
-          if (++restartAttempts > 3) { setNotice("Connection interrupted. Leave and rejoin to reconnect."); return; }
-          void localApi<{ iceServers: RTCIceServer[] }>("/api/local-voice/config", sessionToken).then(config => {
-            if (peerConnectionsRef.current.get(key) !== connection || !joinedRef.current) return;
-            iceServersRef.current = config.iceServers; connection.setConfiguration({ iceServers: config.iceServers });
-            return signaling.offer(true);
-          }).catch(signalError);
-        }, connection.connectionState === "failed" ? 500 : 4000);
-        restartTimersRef.current.set(key, timer);
+        restartAttempts = 0; window.clearTimeout(restartTimersRef.current.get(key)); restartTimersRef.current.delete(key); setNotice("");
+      } else if (["disconnected", "failed"].includes(connection.connectionState)) {
+        if (connection.connectionState === "failed") { window.clearTimeout(restartTimersRef.current.get(key)); restartTimersRef.current.delete(key); }
+        scheduleRestart(connection.connectionState === "failed" ? 500 : 4000);
       } else if (connection.connectionState === "closed") cleanupPeer(key);
     };
+    // A lost offer or answer leaves the peer "new" or "connecting" with no state change to react to.
+    scheduleRestart(10_000);
     peerConnectionsRef.current.set(key, connection);
     return connection;
   };

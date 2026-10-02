@@ -68,18 +68,36 @@ export function sessionTokenFromRequest(request: Request, body?: { sessionToken?
   if (auth?.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
   return typeof body?.sessionToken === "string" ? body.sessionToken : "";
 }
+// Convex can briefly answer with a generic 500; retry those instead of failing call signaling.
+async function queryWithRetry<T>(run: () => Promise<T>) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await run(); }
+    catch (error) {
+      const transient = error instanceof Error && /InternalServerError|Overloaded|fetch failed|ECONNRESET|ETIMEDOUT/.test(error.message);
+      if (!transient || attempt === 2) { if (transient) console.error("Convex query failed after retries:", error.message); throw error; }
+      await new Promise(resolve => setTimeout(resolve, 200 * (attempt + 1)));
+    }
+  }
+}
 export async function requireLocalUser(sessionToken: string) {
   if (!sessionToken) throw new Error("Login required");
-  const user = await getConvexClient().query(api.auth.me, { sessionToken }) as LocalUser | null;
+  const user = await queryWithRetry(() => getConvexClient().query(api.auth.me, { sessionToken })) as LocalUser | null;
   if (!user) throw new Error("Login required"); return user;
 }
+// Calls poll every second; reuse a recent access check instead of asking Convex on every request.
+const workspaceAccessCache = new Map<string, { user: LocalWorkspaceUser; expires: number }>();
+const WORKSPACE_ACCESS_TTL = 15_000;
 export async function requireLocalWorkspace(request: Request, body?: { sessionToken?: unknown; teamId?: unknown }): Promise<LocalWorkspaceUser> {
   const token = sessionTokenFromRequest(request, body);
   const teamId = new URL(request.url).searchParams.get("teamId") || (typeof body?.teamId === "string" ? body.teamId : "");
   if (!teamId) throw new Error("Workspace required");
-  const [user, access] = await Promise.all([requireLocalUser(token), getConvexClient().query(api.workspaces.access, { sessionToken: token, teamId: teamId as Id<"teams"> })]);
+  const key = `${token}\n${teamId}`, cached = workspaceAccessCache.get(key);
+  if (token && cached && cached.expires > Date.now()) return cached.user;
+  const [user, access] = await Promise.all([requireLocalUser(token), queryWithRetry(() => getConvexClient().query(api.workspaces.access, { sessionToken: token, teamId: teamId as Id<"teams"> }))]);
   const scoped = { ...user, teamId: access.teamId, workspaceRole: access.role, slug: access.slug };
   if (process.env.ORIGIN_LEGACY_WORKSPACE_ID === access.teamId) migrateLegacy(scoped);
+  if (workspaceAccessCache.size > 500) for (const [entry, value] of workspaceAccessCache) if (value.expires <= Date.now()) workspaceAccessCache.delete(entry);
+  workspaceAccessCache.set(key, { user: scoped, expires: Date.now() + WORKSPACE_ACCESS_TTL });
   return scoped;
 }
 export async function requireLocalChat(request: Request, body?: { sessionToken?: unknown; teamId?: unknown }) {
